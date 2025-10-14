@@ -109,7 +109,7 @@ parq count FILE
 **Regular File (No Nested Structure):**
 
 ```bash
-$ parq data.parquet
+$ parq meta data.parquet
 ```
 
 ```
@@ -129,7 +129,7 @@ $ parq data.parquet
 **Nested Structure File (Shows Physical Column Count):**
 
 ```bash
-$ parq nested.parquet
+$ parq meta nested.parquet
 ```
 
 ```
@@ -208,11 +208,11 @@ ruff check --fix parq tests
 - [x] Row count statistics
 - [x] File size and compression information display
 - [x] Nested structure smart detection (logical vs physical column count)
-- [ ] SQL query support
+- [ ] Add split command, split a parquet file into multiple parquet files
 - [ ] Data statistical analysis
-- [ ] Format conversion (CSV, JSON, Excel)
-- [ ] File comparison
-- [ ] Cloud storage support (S3, GCS, Azure)
+- [ ] Add convert command, convert a parquet file to other formats (CSV, JSON, Excel)
+- [ ] Add diff command, compare the differences between two parquet files
+- [ ] Add merge command, merge multiple parquet files into one parquet file
 
 ## 🤝 Contributing
 

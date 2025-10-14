@@ -109,7 +109,7 @@ parq count FILE
 **普通文件（无嵌套结构）：**
 
 ```bash
-$ parq data.parquet
+$ parq meta data.parquet
 ```
 
 ```
@@ -129,7 +129,7 @@ $ parq data.parquet
 **嵌套结构文件（显示物理列数）：**
 
 ```bash
-$ parq nested.parquet
+$ parq meta nested.parquet
 ```
 
 ```
@@ -150,7 +150,7 @@ $ parq nested.parquet
 ### Schema 展示
 
 ```bash
-$ parq data.parquet --schema
+$ parq schema data.parquet
 ```
 
 ```
@@ -208,11 +208,11 @@ ruff check --fix parq tests
 - [x] 行数统计
 - [x] 文件大小和压缩信息显示
 - [x] 嵌套结构智能识别（逻辑列数 vs 物理列数）
-- [ ] SQL 查询支持
+- [ ] 添加split命令，将一个parquet文件拆分成多个parquet文件
 - [ ] 数据统计分析
-- [ ] 格式转换（CSV, JSON, Excel）
-- [ ] 文件对比
-- [ ] 云存储支持（S3, GCS, Azure）
+- [ ] 添加convert命令，将一个parquet文件转换成其他格式（CSV, JSON, Excel）
+- [ ] 添加diff命令，比较两个parquet文件的差异
+- [ ] 添加merge命令，将多个parquet文件合并成一个parquet文件
 
 ## 🤝 贡献
 
