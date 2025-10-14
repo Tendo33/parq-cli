@@ -37,7 +37,9 @@ def main(
     head: Annotated[Optional[int], typer.Option("--head", help="Display first N rows")] = None,
     tail: Annotated[Optional[int], typer.Option("--tail", help="Display last N rows")] = None,
     count: Annotated[bool, typer.Option("--count", "-c", help="Display total row count")] = False,
-    version: Annotated[bool, typer.Option("--version", "-v", help="Show version information")] = False,
+    version: Annotated[
+        bool, typer.Option("--version", "-v", help="Show version information")
+    ] = False,
 ) -> None:
     """
     A powerful command-line tool for inspecting Apache Parquet files 🚀
@@ -58,26 +60,27 @@ def main(
 
         # Show row count
         parq data.parquet --count
-        
+
         # Show version
         parq --version
     """
     # If a subcommand was invoked, don't run this callback logic
     if ctx.invoked_subcommand is not None:
         return
-    
+
     # Handle version flag
     if version:
         from parq import __version__
+
         typer.echo(f"parq-cli version {__version__}")
         return
-    
+
     # File is required if not showing version
     if file is None:
         typer.echo("Error: Missing argument 'FILE'.")
         typer.echo("Try 'parq --help' for help.")
         raise typer.Exit(code=1)
-    
+
     try:
         reader = ParquetReader(str(file))
 

@@ -25,12 +25,22 @@ class OutputFormatter:
         Args:
             metadata_dict: Dictionary containing metadata
         """
-        content = "\n".join(
-            [
-                f"[cyan]{key}:[/cyan] [yellow]{value}[/yellow]"
-                for key, value in metadata_dict.items()
-            ]
-        )
+        # Special handling for column counts
+        content_lines = []
+        for key, value in metadata_dict.items():
+            if key == "num_columns":
+                content_lines.append(
+                    f"[cyan]{key}:[/cyan] [yellow]{value}[/yellow] [dim](logical)[/dim]"
+                )
+            elif key == "num_physical_columns":
+                content_lines.append(
+                    f"[cyan]{key}:[/cyan] [yellow]{value}[/yellow] [dim](storage)[/dim]"
+                )
+            else:
+                content_lines.append(f"[cyan]{key}:[/cyan] [yellow]{value}[/yellow]")
+
+        content = "\n".join(content_lines)
+
         panel = Panel(
             content,
             title="[bold green]📊 Parquet File Metadata[/bold green]",
@@ -130,13 +140,13 @@ class OutputFormatter:
 
 
 # {{CHENGQI:
-# Action: Created; Timestamp: 2025-10-14 16:16:00 +08:00;
-# Reason: Output formatting module using Rich library for beautiful terminal output;
-# Principle_Applied: SOLID-S (Single Responsibility), DRY, User-centric design
+# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
+# Reason: Enhanced metadata display to show both logical and physical column counts;
+# Principle_Applied: User-centric design - clear distinction between logical and physical columns
 # }}
 # {{START MODIFICATIONS}}
-# - Implemented OutputFormatter with Rich library
-# - Added methods for metadata, schema, table, and count display
-# - Beautiful colored output with panels and tables
-# - Error and success message formatting
+# - Enhanced print_metadata to distinguish logical vs physical columns
+# - Added visual indicators: (logical) for num_columns, (storage) for num_physical_columns
+# - Added informative note when physical columns differ from logical columns
+# - Helps users understand nested structure impact on column count
 # {{END MODIFICATIONS}}

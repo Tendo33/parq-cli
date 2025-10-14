@@ -43,7 +43,12 @@ class ParquetReader:
 
     @property
     def num_columns(self) -> int:
-        """Get total number of columns."""
+        """Get total number of columns (logical schema columns)."""
+        return len(self.schema)
+
+    @property
+    def num_physical_columns(self) -> int:
+        """Get total number of physical columns (from metadata)."""
         return self.metadata.num_columns
 
     @property
@@ -58,15 +63,27 @@ class ParquetReader:
         Returns:
             Dictionary containing file metadata
         """
-        return {
+        metadata_dict = {
             "file_path": str(self.file_path),
             "num_rows": self.num_rows,
             "num_columns": self.num_columns,
-            "num_row_groups": self.num_row_groups,
-            "format_version": self.metadata.format_version,
-            "serialized_size": self.metadata.serialized_size,
-            "created_by": self.metadata.created_by,
         }
+
+        # Add physical columns right after logical columns if different
+        if self.num_physical_columns != self.num_columns:
+            metadata_dict["num_physical_columns"] = self.num_physical_columns
+
+        # Add remaining metadata
+        metadata_dict.update(
+            {
+                "num_row_groups": self.num_row_groups,
+                "format_version": self.metadata.format_version,
+                "serialized_size": self.metadata.serialized_size,
+                "created_by": self.metadata.created_by,
+            }
+        )
+
+        return metadata_dict
 
     def get_schema_info(self) -> List[dict]:
         """
@@ -127,13 +144,12 @@ class ParquetReader:
 
 
 # {{CHENGQI:
-# Action: Created; Timestamp: 2025-10-14 16:14:00 +08:00;
-# Reason: Core reader implementation with metadata and data reading capabilities;
-# Principle_Applied: SOLID-S (Single Responsibility), DRY, High Cohesion
+# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
+# Reason: Fixed num_columns to use schema length instead of metadata for accurate logical column count;
+# Principle_Applied: User-centric design - show logical columns that users actually see
 # }}
 # {{START MODIFICATIONS}}
-# - Implemented ParquetReader class with PyArrow backend
-# - Added metadata inspection methods
-# - Added head/tail reading functionality
-# - Proper error handling for file not found
+# - Changed num_columns from metadata.num_columns to len(self.schema)
+# - Reason: metadata.num_columns may include physical columns from nested structures
+# - Schema length represents logical columns that users expect to see
 # {{END MODIFICATIONS}}
