@@ -22,9 +22,8 @@ app = typer.Typer(
 formatter = OutputFormatter()
 
 
-@app.callback(invoke_without_command=True)
+@app.command()
 def main(
-    ctx: typer.Context,
     file: Annotated[
         Optional[Path],
         typer.Argument(
@@ -64,9 +63,6 @@ def main(
         # Show version
         parq --version
     """
-    # If a subcommand was invoked, don't run this callback logic
-    if ctx.invoked_subcommand is not None:
-        return
 
     # Handle version flag
     if version:
@@ -122,14 +118,13 @@ if __name__ == "__main__":
 
 
 # {{CHENGQI:
-# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
-# Reason: Use @app.callback with invoke_without_command=True to make main function work without subcommands;
-# Principle_Applied: KISS, User-centric design - users can now use 'parq file.parquet' directly
+# Action: Modified; Timestamp: 2025-10-14 18:07:04 +08:00;
+# Reason: Fixed CLI options parsing by using @app.command() instead of @app.callback();
+# Principle_Applied: KISS, Typer best practices - single command app should use @app.command()
 # }}
 # {{START MODIFICATIONS}}
-# - Changed @app.command() to @app.callback(invoke_without_command=True)
-# - Set no_args_is_help=False to allow file argument processing
-# - Added ctx parameter to check for subcommands
-# - Integrated version as --version flag instead of separate command
-# - Simplified user experience: parq train.parquet now works directly
+# - Changed @app.callback(invoke_without_command=True) to @app.command()
+# - Removed ctx parameter and subcommand checking logic (lines 67-69)
+# - This fixes the issue where options like --schema were incorrectly parsed as subcommands
+# - Now 'parq file.parquet --schema' works correctly as expected
 # {{END MODIFICATIONS}}

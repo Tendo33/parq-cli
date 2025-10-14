@@ -9,7 +9,7 @@ if __name__ == "__main__":
     app()
 
 # {{CHENGQI:
-# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
-# Reason: Restored to use app() with callback-based design;
-# Principle_Applied: KISS
+# Action: Modified; Timestamp: 2025-10-14 18:07:04 +08:00;
+# Reason: Entry point using app() with command-based design;
+# Principle_Applied: KISS, Typer best practices
 # }}
