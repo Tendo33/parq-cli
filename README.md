@@ -67,7 +67,7 @@ parq data.parquet --head 5 --schema
 ### 主命令
 
 ```
-parq [OPTIONS] FILE
+parq FILE [OPTIONS]
 ```
 
 **参数:**
@@ -86,6 +86,11 @@ parq [OPTIONS] FILE
 ### 元数据展示
 
 **普通文件（无嵌套结构）：**
+
+```bash
+$ parq data.parquet
+```
+
 ```
 ╭─────────────────────── 📊 Parquet File Metadata ───────────────────────╮
 │ file_path: data.parquet                                                │
@@ -101,6 +106,11 @@ parq [OPTIONS] FILE
 ```
 
 **嵌套结构文件（显示物理列数）：**
+
+```bash
+$ parq nested.parquet
+```
+
 ```
 ╭─────────────────────── 📊 Parquet File Metadata ───────────────────────╮
 │ file_path: nested.parquet                                              │
@@ -117,6 +127,10 @@ parq [OPTIONS] FILE
 ```
 
 ### Schema 展示
+
+```bash
+$ parq data.parquet --schema
+```
 
 ```
                     📋 Schema Information
