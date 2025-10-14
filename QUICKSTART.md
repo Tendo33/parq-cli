@@ -112,16 +112,13 @@ pytest --cov=parq --cov-report=html
 
 ## 🛠️ 开发
 
-### 代码格式化
+### 代码格式化和检查
 
 ```bash
-# 使用 Black 格式化代码
-black parq tests
-
 # 使用 Ruff 检查
 ruff check parq tests
 
-# 自动修复
+# 使用 Ruff 自动修复
 ruff check --fix parq tests
 ```
 

@@ -21,10 +21,10 @@ class OutputFormatter:
     def _format_file_size(size_bytes: int) -> str:
         """
         Format file size in human-readable format.
-        
+
         Args:
             size_bytes: Size in bytes
-            
+
         Returns:
             Formatted string like "1.23 MB"
         """

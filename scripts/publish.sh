@@ -29,7 +29,6 @@ echo ""
 
 # 3. 代码质量检查
 echo "🔍 代码质量检查..."
-black parq tests
 ruff check parq tests
 echo "✅ 代码检查通过"
 echo ""

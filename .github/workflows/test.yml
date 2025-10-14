@@ -42,7 +42,6 @@ jobs:
       - name: 🔍 Code quality check
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         run: |
-          pip install black ruff
-          black --check parq tests
+          pip install ruff
           ruff check parq tests
 
