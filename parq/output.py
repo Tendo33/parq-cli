@@ -161,16 +161,3 @@ class OutputFormatter:
             message: Success message to display
         """
         console.print(f"[bold green]✓[/bold green] {message}")
-
-
-# {{CHENGQI:
-# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
-# Reason: Enhanced metadata display to show both logical and physical column counts;
-# Principle_Applied: User-centric design - clear distinction between logical and physical columns
-# }}
-# {{START MODIFICATIONS}}
-# - Enhanced print_metadata to distinguish logical vs physical columns
-# - Added visual indicators: (logical) for num_columns, (storage) for num_physical_columns
-# - Added informative note when physical columns differ from logical columns
-# - Helps users understand nested structure impact on column count
-# {{END MODIFICATIONS}}

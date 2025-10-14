@@ -46,44 +46,37 @@ python examples/create_sample_data.py
 
 ### 基础命令
 
-#### 1. 查看文件元数据（默认行为）
+#### 1. 查看文件元数据
 
 ```bash
-parq examples/simple.parquet
+parq meta examples/simple.parquet
 ```
 
 #### 2. 显示 Schema
 
 ```bash
-parq examples/simple.parquet --schema
-# 或使用短选项
-parq examples/simple.parquet -s
+parq schema examples/simple.parquet
 ```
 
 #### 3. 预览数据
 
 ```bash
 # 显示前 10 行
-parq examples/simple.parquet --head 10
+parq head -n 10 examples/simple.parquet
 
-# 显示后 5 行
-parq examples/simple.parquet --tail 5
+# 显示后 5 行（默认）
+parq tail examples/simple.parquet
 ```
 
 #### 4. 统计行数
 
 ```bash
-parq examples/simple.parquet --count
-# 或使用短选项
-parq examples/simple.parquet -c
+parq count examples/simple.parquet
 ```
 
 #### 5. 组合使用
 
-```bash
-# 同时显示多个信息
-parq examples/simple.parquet --schema --count --head 5
-```
+（已简化为子命令模式，推荐按需分别执行上述命令）
 
 ## 🧪 运行测试
 

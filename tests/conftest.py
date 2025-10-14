@@ -26,10 +26,3 @@ def sample_parquet_file(tmp_path):
     pq.write_table(table, file_path)
 
     return file_path
-
-
-# {{CHENGQI:
-# Action: Created; Timestamp: 2025-10-14 16:20:00 +08:00;
-# Reason: Pytest configuration with sample data fixture;
-# Principle_Applied: DRY, Testability
-# }}

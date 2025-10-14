@@ -150,15 +150,3 @@ class ParquetReader:
             PyArrow table with selected columns
         """
         return self._parquet_file.read(columns=columns)
-
-
-# {{CHENGQI:
-# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
-# Reason: Fixed num_columns to use schema length instead of metadata for accurate logical column count;
-# Principle_Applied: User-centric design - show logical columns that users actually see
-# }}
-# {{START MODIFICATIONS}}
-# - Changed num_columns from metadata.num_columns to len(self.schema)
-# - Reason: metadata.num_columns may include physical columns from nested structures
-# - Schema length represents logical columns that users expect to see
-# {{END MODIFICATIONS}}

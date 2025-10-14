@@ -4,7 +4,6 @@ Command-line interface for parq-cli tool.
 """
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from typing_extensions import Annotated
@@ -16,95 +15,147 @@ app = typer.Typer(
     name="parq",
     help="A powerful command-line tool for inspecting Apache Parquet files 🚀",
     add_completion=False,
-    no_args_is_help=False,
 )
 
 formatter = OutputFormatter()
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
-    file: Annotated[
-        Optional[Path],
-        typer.Argument(
-            help="Path to Parquet file",
-        ),
-    ] = None,
-    schema: Annotated[
-        bool, typer.Option("--schema", "-s", help="Display schema information")
-    ] = False,
-    head: Annotated[Optional[int], typer.Option("--head", help="Display first N rows")] = None,
-    tail: Annotated[Optional[int], typer.Option("--tail", help="Display last N rows")] = None,
-    count: Annotated[bool, typer.Option("--count", "-c", help="Display total row count")] = False,
+    ctx: typer.Context,
     version: Annotated[
         bool, typer.Option("--version", "-v", help="Show version information")
     ] = False,
 ) -> None:
-    """
-    A powerful command-line tool for inspecting Apache Parquet files 🚀
-
-    Examples:
-
-        # Show file metadata
-        parq data.parquet
-
-        # Show schema
-        parq data.parquet --schema
-
-        # Show first 10 rows
-        parq data.parquet --head 10
-
-        # Show last 5 rows
-        parq data.parquet --tail 5
-
-        # Show row count
-        parq data.parquet --count
-
-        # Show version
-        parq --version
-    """
-
-    # Handle version flag
+    """A powerful command-line tool for inspecting Apache Parquet files 🚀"""
     if version:
         from parq import __version__
 
         typer.echo(f"parq-cli version {__version__}")
-        return
+        raise typer.Exit()
 
-    # File is required if not showing version
-    if file is None:
-        typer.echo("Error: Missing argument 'FILE'.")
-        typer.echo("Try 'parq --help' for help.")
-        raise typer.Exit(code=1)
+    # If no subcommand and no version flag, show help
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
 
+
+@app.command()
+def meta(
+    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+) -> None:
+    """
+    Display metadata information of a Parquet file.
+
+    Example:
+
+        parq meta data.parquet
+    """
     try:
         reader = ParquetReader(str(file))
+        metadata = reader.get_metadata_dict()
+        formatter.print_metadata(metadata)
+    except FileNotFoundError as e:
+        formatter.print_error(str(e))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        formatter.print_error(f"Failed to read Parquet file: {e}")
+        raise typer.Exit(code=1)
 
-        # If no options specified, show metadata
-        if not any([schema, head is not None, tail is not None, count]):
-            metadata = reader.get_metadata_dict()
-            formatter.print_metadata(metadata)
-            return
 
-        # Show schema
-        if schema:
-            schema_info = reader.get_schema_info()
-            formatter.print_schema(schema_info)
+@app.command()
+def schema(
+    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+) -> None:
+    """
+    Display the schema of a Parquet file.
 
-        # Show head
-        if head is not None:
-            table = reader.read_head(head)
-            formatter.print_table(table, f"First {head} Rows")
+    Example:
 
-        # Show tail
-        if tail is not None:
-            table = reader.read_tail(tail)
-            formatter.print_table(table, f"Last {tail} Rows")
+        parq schema data.parquet
+    """
+    try:
+        reader = ParquetReader(str(file))
+        schema_info = reader.get_schema_info()
+        formatter.print_schema(schema_info)
+    except FileNotFoundError as e:
+        formatter.print_error(str(e))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        formatter.print_error(f"Failed to read Parquet file: {e}")
+        raise typer.Exit(code=1)
 
-        # Show count
-        if count:
-            formatter.print_count(reader.num_rows)
 
+@app.command()
+def head(
+    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
+) -> None:
+    """
+    Display the first N rows of a Parquet file (default: 5).
+
+    Examples:
+
+        # Show first 5 rows (default)
+        parq head data.parquet
+
+        # Show first 10 rows
+        parq head -n 10 data.parquet
+    """
+    try:
+        reader = ParquetReader(str(file))
+        table = reader.read_head(n)
+        formatter.print_table(table, f"First {n} Rows")
+    except FileNotFoundError as e:
+        formatter.print_error(str(e))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        formatter.print_error(f"Failed to read Parquet file: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def tail(
+    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
+) -> None:
+    """
+    Display the last N rows of a Parquet file (default: 5).
+
+    Examples:
+
+        # Show last 5 rows (default)
+        parq tail data.parquet
+
+        # Show last 10 rows
+        parq tail -n 10 data.parquet
+    """
+    try:
+        reader = ParquetReader(str(file))
+        table = reader.read_tail(n)
+        formatter.print_table(table, f"Last {n} Rows")
+    except FileNotFoundError as e:
+        formatter.print_error(str(e))
+        raise typer.Exit(code=1)
+    except Exception as e:
+        formatter.print_error(f"Failed to read Parquet file: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def count(
+    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+) -> None:
+    """
+    Display the total row count of a Parquet file.
+
+    Example:
+
+        parq count data.parquet
+    """
+    try:
+        reader = ParquetReader(str(file))
+        formatter.print_count(reader.num_rows)
     except FileNotFoundError as e:
         formatter.print_error(str(e))
         raise typer.Exit(code=1)
@@ -115,16 +166,3 @@ def main(
 
 if __name__ == "__main__":
     app()
-
-
-# {{CHENGQI:
-# Action: Modified; Timestamp: 2025-10-14 18:07:04 +08:00;
-# Reason: Fixed CLI options parsing by using @app.command() instead of @app.callback();
-# Principle_Applied: KISS, Typer best practices - single command app should use @app.command()
-# }}
-# {{START MODIFICATIONS}}
-# - Changed @app.callback(invoke_without_command=True) to @app.command()
-# - Removed ctx parameter and subcommand checking logic (lines 67-69)
-# - This fixes the issue where options like --schema were incorrectly parsed as subcommands
-# - Now 'parq file.parquet --schema' works correctly as expected
-# {{END MODIFICATIONS}}

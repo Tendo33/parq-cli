@@ -85,10 +85,3 @@ class TestParquetReader:
         assert table.num_columns == 2
         assert "id" in table.column_names
         assert "name" in table.column_names
-
-
-# {{CHENGQI:
-# Action: Created; Timestamp: 2025-10-14 16:22:00 +08:00;
-# Reason: Comprehensive unit tests for ParquetReader;
-# Principle_Applied: Testability, High Coverage
-# }}

@@ -39,47 +39,66 @@ pip install parq-cli
 
 ```bash
 # View file metadata
-parq data.parquet
+parq meta data.parquet
 
 # Display schema information
-parq data.parquet --schema
+parq schema data.parquet
+
+# Display first 5 rows (default)
+parq head data.parquet
 
 # Display first 10 rows
-parq data.parquet --head 10
+parq head -n 10 data.parquet
 
-# Display last 5 rows
-parq data.parquet --tail 5
+# Display last 5 rows (default)
+parq tail data.parquet
+
+# Display last 20 rows
+parq tail -n 20 data.parquet
 
 # Display total row count
-parq data.parquet --count
-```
-
-### Combined Usage
-
-```bash
-# Display schema and row count together
-parq data.parquet --schema --count
-
-# Display first 5 rows and schema
-parq data.parquet --head 5 --schema
+parq count data.parquet
 ```
 
 ## 📖 Command Reference
 
-### Main Command
+### View Metadata
 
+```bash
+parq meta FILE
 ```
-parq FILE [OPTIONS]
+
+Display Parquet file metadata (row count, column count, file size, compression type, etc.).
+
+### View Schema
+
+```bash
+parq schema FILE
 ```
 
-**Arguments:**
-- `FILE`: Path to Parquet file (required)
+Display the column structure and data types of a Parquet file.
 
-**Options:**
-- `--schema, -s`: Display schema information
-- `--head N`: Display first N rows
-- `--tail N`: Display last N rows
-- `--count, -c`: Display total row count
+### Preview Data
+
+```bash
+# Display first N rows (default 5)
+parq head FILE
+parq head -n N FILE
+
+# Display last N rows (default 5)
+parq tail FILE
+parq tail -n N FILE
+```
+
+### Statistics
+
+```bash
+# Display total row count
+parq count FILE
+```
+
+### Global Options
+
 - `--version, -v`: Display version information
 - `--help`: Display help information
 
@@ -131,7 +150,7 @@ $ parq nested.parquet
 ### Schema Display
 
 ```bash
-$ parq data.parquet --schema
+$ parq schema data.parquet
 ```
 
 ```

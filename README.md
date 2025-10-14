@@ -39,47 +39,66 @@ pip install parq-cli
 
 ```bash
 # 查看文件元数据
-parq data.parquet
+parq meta data.parquet
 
 # 显示 schema 信息
-parq data.parquet --schema
+parq schema data.parquet
+
+# 显示前 5 行（默认）
+parq head data.parquet
 
 # 显示前 10 行
-parq data.parquet --head 10
+parq head -n 10 data.parquet
 
-# 显示后 5 行
-parq data.parquet --tail 5
+# 显示后 5 行（默认）
+parq tail data.parquet
+
+# 显示后 20 行
+parq tail -n 20 data.parquet
 
 # 显示总行数
-parq data.parquet --count
-```
-
-### 组合使用
-
-```bash
-# 同时显示 schema 和行数
-parq data.parquet --schema --count
-
-# 显示前 5 行和 schema
-parq data.parquet --head 5 --schema
+parq count data.parquet
 ```
 
 ## 📖 命令参考
 
-### 主命令
+### 查看元数据
 
+```bash
+parq meta FILE
 ```
-parq FILE [OPTIONS]
+
+显示 Parquet 文件的元数据信息（行数、列数、文件大小、压缩类型等）。
+
+### 查看 Schema
+
+```bash
+parq schema FILE
 ```
 
-**参数:**
-- `FILE`: Parquet 文件路径（必需）
+显示 Parquet 文件的列结构和数据类型。
 
-**选项:**
-- `--schema, -s`: 显示 schema 信息
-- `--head N`: 显示前 N 行
-- `--tail N`: 显示后 N 行
-- `--count, -c`: 显示总行数
+### 预览数据
+
+```bash
+# 显示前 N 行（默认 5 行）
+parq head FILE
+parq head -n N FILE
+
+# 显示后 N 行（默认 5 行）
+parq tail FILE
+parq tail -n N FILE
+```
+
+### 统计信息
+
+```bash
+# 显示总行数
+parq count FILE
+```
+
+### 全局选项
+
 - `--version, -v`: 显示版本信息
 - `--help`: 显示帮助信息
 
