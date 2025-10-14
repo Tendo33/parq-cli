@@ -186,7 +186,7 @@ ruff check parq tests
 ## 📮 联系方式
 
 - 作者: Jinfeng Sun
-- 项目地址: https://github.com/yourusername/parq-cli
+- 项目地址: https://github.com/Tendo33/parq-cli
 
 ---
 

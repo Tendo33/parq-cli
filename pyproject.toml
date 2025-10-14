@@ -13,7 +13,7 @@ authors = [
     {name = "SimonSun", email = "sjf19981112@gmail.com"}
 ]
 license = {text = "MIT"}
-keywords = ["parquet", "cli", "data", "analytics"]
+keywords = ["parquet", "cli", "data", "analytics", "apache-parquet", "data-tools"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -25,6 +25,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Tendo33/parq-cli"
+Repository = "https://github.com/Tendo33/parq-cli"
+Issues = "https://github.com/Tendo33/parq-cli/issues"
+Documentation = "https://github.com/Tendo33/parq-cli#readme"
 
 [project.scripts]
 parq = "parq.cli:app"
