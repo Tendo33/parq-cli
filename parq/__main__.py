@@ -9,7 +9,7 @@ if __name__ == "__main__":
     app()
 
 # {{CHENGQI:
-# Action: Created; Timestamp: 2025-10-14 16:19:00 +08:00;
-# Reason: Module entry point for python -m parq execution;
+# Action: Modified; Timestamp: 2025-10-14 HH:MM:SS +08:00;
+# Reason: Restored to use app() with callback-based design;
 # Principle_Applied: KISS
 # }}

@@ -19,8 +19,8 @@ class TestCLI:
         assert "parq" in result.output.lower()
 
     def test_cli_version(self):
-        """Test version command."""
-        result = runner.invoke(app, ["version"])
+        """Test version option."""
+        result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert "0.1.0" in result.output
 
