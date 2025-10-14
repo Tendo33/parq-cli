@@ -31,7 +31,7 @@ uv pip install -e .
 
 ```bash
 parq --help
-parq version
+parq --version
 ```
 
 ## 🚀 快速使用
