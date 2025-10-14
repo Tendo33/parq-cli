@@ -27,10 +27,6 @@ def main(
         Path,
         typer.Argument(
             help="Path to Parquet file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
         ),
     ],
     schema: Annotated[

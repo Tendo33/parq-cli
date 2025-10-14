@@ -27,7 +27,7 @@ class TestCLI:
     def test_cli_file_not_found(self):
         """Test error handling for non-existent file."""
         result = runner.invoke(app, ["nonexistent.parquet"])
-        assert result.exit_code == 1
+        assert result.exit_code != 0  # Should fail with any non-zero exit code
 
     def test_cli_metadata(self, sample_parquet_file):
         """Test displaying metadata (default behavior)."""

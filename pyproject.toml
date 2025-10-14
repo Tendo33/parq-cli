@@ -8,6 +8,7 @@ dependencies = [
     "pyarrow>=18.0.0",
     "typer>=0.15.0",
     "rich>=13.0.0",
+    "pandas>=2.0.0",
 ]
 authors = [
     {name = "SimonSun", email = "sjf19981112@gmail.com"}
