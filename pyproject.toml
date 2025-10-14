@@ -1,0 +1,53 @@
+[project]
+name = "parq-cli"
+version = "0.1.0"
+description = "A powerful command-line tool for inspecting and analyzing Apache Parquet files"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyarrow>=18.0.0",
+    "typer>=0.15.0",
+    "rich>=13.0.0",
+]
+authors = [
+    {name = "SimonSun", email = "sjf19981112@gmail.com"}
+]
+license = {text = "MIT"}
+keywords = ["parquet", "cli", "data", "analytics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.scripts]
+parq = "parq.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "black>=24.0.0",
+    "ruff>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["parq"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
