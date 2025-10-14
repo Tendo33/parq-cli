@@ -73,6 +73,15 @@ class ParquetReader:
         if self.num_physical_columns != self.num_columns:
             metadata_dict["num_physical_columns"] = self.num_physical_columns
 
+        # Add file size
+        file_size = self.file_path.stat().st_size
+        metadata_dict["file_size"] = file_size
+        
+        # Add compression type (from first row group, first column)
+        if self.num_row_groups > 0:
+            compression = self.metadata.row_group(0).column(0).compression
+            metadata_dict["compression_types"] = compression
+
         # Add remaining metadata
         metadata_dict.update(
             {

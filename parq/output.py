@@ -18,6 +18,26 @@ class OutputFormatter:
     """Formatter for displaying Parquet data and metadata."""
 
     @staticmethod
+    def _format_file_size(size_bytes: int) -> str:
+        """
+        Format file size in human-readable format.
+        
+        Args:
+            size_bytes: Size in bytes
+            
+        Returns:
+            Formatted string like "1.23 MB"
+        """
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.2f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.2f} MB"
+        else:
+            return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+    @staticmethod
     def print_metadata(metadata_dict: Dict[str, Any]) -> None:
         """
         Print file metadata in a formatted panel.
@@ -25,7 +45,7 @@ class OutputFormatter:
         Args:
             metadata_dict: Dictionary containing metadata
         """
-        # Special handling for column counts
+        # Special handling for specific fields
         content_lines = []
         for key, value in metadata_dict.items():
             if key == "num_columns":
@@ -36,6 +56,10 @@ class OutputFormatter:
                 content_lines.append(
                     f"[cyan]{key}:[/cyan] [yellow]{value}[/yellow] [dim](storage)[/dim]"
                 )
+            elif key == "file_size":
+                # Format file size in human-readable format
+                formatted_size = OutputFormatter._format_file_size(value)
+                content_lines.append(f"[cyan]{key}:[/cyan] [yellow]{formatted_size}[/yellow]")
             else:
                 content_lines.append(f"[cyan]{key}:[/cyan] [yellow]{value}[/yellow]")
 
