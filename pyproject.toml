@@ -1,6 +1,6 @@
 [project]
 name = "parq-cli"
-version = "0.1.0"
+version = "0.0.1"
 description = "A powerful command-line tool for inspecting and analyzing Apache Parquet files"
 readme = "README.md"
 requires-python = ">=3.9"
