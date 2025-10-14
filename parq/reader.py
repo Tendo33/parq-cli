@@ -150,3 +150,144 @@ class ParquetReader:
             PyArrow table with selected columns
         """
         return self._parquet_file.read(columns=columns)
+
+    def split_file(
+        self,
+        output_pattern: str,
+        file_count: Optional[int] = None,
+        record_count: Optional[int] = None,
+    ) -> List[Path]:
+        """
+        Split parquet file into multiple files.
+
+        Args:
+            output_pattern: Output file name pattern (e.g., 'result-%06d.parquet')
+            file_count: Number of output files (mutually exclusive with record_count)
+            record_count: Number of records per file (mutually exclusive with file_count)
+
+        Returns:
+            List of created file paths
+
+        Raises:
+            ValueError: If both or neither of file_count/record_count are provided
+            IOError: If file write fails
+        """
+        # {{CHENGQI:
+        # Action: Added; Timestamp: 2025-10-14 21:30:00 +08:00;
+        # Reason: Implement split command functionality;
+        # Principle_Applied: SOLID-S (Single Responsibility), DRY, Error handling
+        # }}
+        # {{START MODIFICATIONS}}
+
+        # Validate parameters
+        if file_count is None and record_count is None:
+            raise ValueError("Either file_count or record_count must be specified")
+        if file_count is not None and record_count is not None:
+            raise ValueError("file_count and record_count are mutually exclusive")
+
+        total_rows = self.num_rows
+        if total_rows == 0:
+            raise ValueError("Cannot split empty file")
+
+        # Calculate number of files and rows per file
+        if file_count is not None:
+            if file_count <= 0:
+                raise ValueError("file_count must be positive")
+            num_files = file_count
+            rows_per_file = (total_rows + num_files - 1) // num_files  # Ceiling division
+        else:
+            if record_count <= 0:
+                raise ValueError("record_count must be positive")
+            rows_per_file = record_count
+            num_files = (total_rows + rows_per_file - 1) // rows_per_file
+
+        # Validate output pattern
+        try:
+            # Test format string with a sample index
+            output_pattern % 0
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid output pattern format: {e}")
+
+        # Prepare output file paths
+        output_files = []
+        for i in range(num_files):
+            output_path = Path(output_pattern % i)
+            output_files.append(output_path)
+
+            # Check if file already exists
+            if output_path.exists():
+                raise FileExistsError(f"Output file already exists: {output_path}")
+
+        # Create writers for each output file
+        writers = []
+        try:
+            for output_path in output_files:
+                # Create parent directories if needed
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Create writer with same schema and compression as source
+                writer = pq.ParquetWriter(
+                    output_path,
+                    self.schema,
+                    compression=self._get_compression_type(),
+                )
+                writers.append(writer)
+
+            # Read and distribute data in batches
+            current_file_idx = 0
+            current_file_rows = 0
+
+            # Use batch reader for memory efficiency
+            batch_size = min(10000, rows_per_file)  # Read in chunks
+            for batch in self._parquet_file.iter_batches(batch_size=batch_size):
+                batch_rows = len(batch)
+                batch_offset = 0
+
+                while batch_offset < batch_rows:
+                    # Calculate how many rows to write to current file
+                    rows_remaining_in_file = rows_per_file - current_file_rows
+                    rows_to_write = min(rows_remaining_in_file, batch_rows - batch_offset)
+
+                    # Extract slice from batch
+                    if rows_to_write == batch_rows and batch_offset == 0:
+                        # Write entire batch
+                        writers[current_file_idx].write_batch(batch)
+                    else:
+                        # Write partial batch
+                        slice_batch = batch.slice(batch_offset, rows_to_write)
+                        writers[current_file_idx].write_batch(slice_batch)
+
+                    batch_offset += rows_to_write
+                    current_file_rows += rows_to_write
+
+                    # Move to next file if current is full
+                    if current_file_rows >= rows_per_file and current_file_idx < num_files - 1:
+                        current_file_idx += 1
+                        current_file_rows = 0
+
+        finally:
+            # Always close writers
+            for writer in writers:
+                if writer:
+                    writer.close()
+
+        # {{END MODIFICATIONS}}
+
+        return output_files
+
+    def _get_compression_type(self) -> str:
+        """
+        Get compression type from source file.
+
+        Returns:
+            Compression type string (e.g., 'SNAPPY', 'GZIP', 'NONE')
+        """
+        # {{CHENGUI:
+        # Action: Added; Timestamp: 2025-10-14 21:30:00 +08:00;
+        # Reason: Helper method to extract compression type for split files;
+        # Principle_Applied: DRY, Encapsulation
+        # }}
+        if self.num_row_groups > 0:
+            compression = self.metadata.row_group(0).column(0).compression
+            return compression
+        return "SNAPPY"  # Default compression

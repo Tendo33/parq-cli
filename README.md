@@ -13,6 +13,7 @@ English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README.zh
 - 📋 **Schema Display**: Beautifully display file column structure and data types
 - 👀 **Data Preview**: Support viewing the first N rows or last N rows of a file
 - 🔢 **Row Count**: Quickly get the total number of rows in a file
+- ✂️ **File Splitting**: Split large Parquet files into multiple smaller files
 - 🗜️ **Compression Info**: Display file compression type and file size
 - 🎨 **Beautiful Output**: Use Rich library for colorful, formatted terminal output
 - 📦 **Smart Display**: Automatically detect nested structures, showing logical and physical column counts
@@ -58,6 +59,12 @@ parq tail -n 20 data.parquet
 
 # Display total row count
 parq count data.parquet
+
+# Split file into 3 parts
+parq split data.parquet --file-count 3
+
+# Split file with 1000 records per file
+parq split data.parquet --record-count 1000
 ```
 
 ## 📖 Command Reference
@@ -96,6 +103,24 @@ parq tail -n N FILE
 # Display total row count
 parq count FILE
 ```
+
+### Split Files
+
+```bash
+# Split into N files
+parq split FILE --file-count N
+
+# Split with M records per file
+parq split FILE --record-count M
+
+# Custom output format
+parq split FILE -f N -n "output-%03d.parquet"
+
+# Split into subdirectory
+parq split FILE -f 3 -n "output/part-%02d.parquet"
+```
+
+Split a Parquet file into multiple smaller files. You can specify either the number of output files (`--file-count`) or the number of records per file (`--record-count`). The output file names are formatted according to the `--name-format` pattern (default: `result-%06d.parquet`).
 
 ### Global Options
 
@@ -208,7 +233,7 @@ ruff check --fix parq tests
 - [x] Row count statistics
 - [x] File size and compression information display
 - [x] Nested structure smart detection (logical vs physical column count)
-- [ ] Add split command, split a parquet file into multiple parquet files
+- [x] Add split command, split a parquet file into multiple parquet files
 - [ ] Data statistical analysis
 - [ ] Add convert command, convert a parquet file to other formats (CSV, JSON, Excel)
 - [ ] Add diff command, compare the differences between two parquet files

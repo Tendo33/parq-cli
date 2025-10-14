@@ -96,3 +96,91 @@ class TestCLI:
         """Test meta command with non-existent file."""
         result = runner.invoke(app, ["meta", "nonexistent.parquet"])
         assert result.exit_code != 0
+
+    def test_split_with_file_count(self, sample_parquet_file, tmp_path):
+        """Test split command with --file-count option."""
+        output_pattern = str(tmp_path / "output-%03d.parquet")
+        result = runner.invoke(
+            app,
+            [
+                "split",
+                str(sample_parquet_file),
+                "--file-count",
+                "2",
+                "--name-format",
+                output_pattern,
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Split Complete" in result.output or "split" in result.output.lower()
+
+        # Verify files were created
+        assert (tmp_path / "output-000.parquet").exists()
+        assert (tmp_path / "output-001.parquet").exists()
+
+    def test_split_with_record_count(self, sample_parquet_file, tmp_path):
+        """Test split command with --record-count option."""
+        output_pattern = str(tmp_path / "part-%02d.parquet")
+        result = runner.invoke(
+            app, ["split", str(sample_parquet_file), "--record-count", "2", "-n", output_pattern]
+        )
+        assert result.exit_code == 0
+
+        # Verify 3 files were created (5 rows / 2 = 3 files)
+        assert (tmp_path / "part-00.parquet").exists()
+        assert (tmp_path / "part-01.parquet").exists()
+        assert (tmp_path / "part-02.parquet").exists()
+
+    def test_split_missing_parameters(self, sample_parquet_file):
+        """Test split command fails without file-count or record-count."""
+        result = runner.invoke(app, ["split", str(sample_parquet_file)])
+        assert result.exit_code != 0
+        assert "must be specified" in result.output
+
+    def test_split_mutually_exclusive_params(self, sample_parquet_file, tmp_path):
+        """Test split command fails with both file-count and record-count."""
+        output_pattern = str(tmp_path / "output-%03d.parquet")
+        result = runner.invoke(
+            app,
+            [
+                "split",
+                str(sample_parquet_file),
+                "--file-count",
+                "2",
+                "--record-count",
+                "100",
+                "-n",
+                output_pattern,
+            ],
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_split_file_not_found(self, tmp_path):
+        """Test split command with non-existent source file."""
+        output_pattern = str(tmp_path / "output-%03d.parquet")
+        result = runner.invoke(
+            app, ["split", "nonexistent.parquet", "--file-count", "2", "-n", output_pattern]
+        )
+        assert result.exit_code != 0
+
+    def test_split_custom_format(self, sample_parquet_file, tmp_path):
+        """Test split with custom name format."""
+        output_pattern = str(tmp_path / "custom_name_%06d.parquet")
+        result = runner.invoke(
+            app, ["split", str(sample_parquet_file), "-f", "3", "-n", output_pattern]
+        )
+        assert result.exit_code == 0
+
+        # Verify custom format was used
+        assert (tmp_path / "custom_name_000000.parquet").exists()
+        assert (tmp_path / "custom_name_000001.parquet").exists()
+        assert (tmp_path / "custom_name_000002.parquet").exists()
+
+    def test_split_short_options(self, sample_parquet_file, tmp_path):
+        """Test split command with short option flags."""
+        output_pattern = str(tmp_path / "out-%d.parquet")
+        result = runner.invoke(
+            app, ["split", str(sample_parquet_file), "-f", "2", "-n", output_pattern]
+        )
+        assert result.exit_code == 0
