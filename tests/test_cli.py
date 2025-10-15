@@ -22,7 +22,7 @@ class TestCLI:
         """Test version option."""
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "0.0.3" in result.output
+        assert "0.1.0" in result.output
 
     def test_cli_file_not_found(self):
         """Test error handling for non-existent file."""
