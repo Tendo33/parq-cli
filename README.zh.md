@@ -20,16 +20,6 @@
 
 ## 📦 安装
 
-### 从源码安装
-
-```bash
-git clone https://github.com/Tendo33/parq-cli.git
-cd parq-cli
-pip install -e .
-```
-
-### 使用 pip 安装（即将支持）
-
 ```bash
 pip install parq-cli
 ```
@@ -261,7 +251,7 @@ ruff check --fix parq tests
 
 ## 📮 联系方式
 
-- 作者: Jinfeng Sun
+- 作者: SimonSun
 - 项目地址: https://github.com/Tendo33/parq-cli
 
 ---

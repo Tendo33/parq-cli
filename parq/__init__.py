@@ -3,4 +3,4 @@ parq-cli: A powerful command-line tool for inspecting and analyzing Apache Parqu
 """
 
 __version__ = "0.1.0"
-__author__ = "Jinfeng Sun"
+__author__ = "SimonSun"

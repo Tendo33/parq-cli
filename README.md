@@ -20,16 +20,6 @@ English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README.zh
 
 ## 📦 Installation
 
-### Install from Source
-
-```bash
-git clone https://github.com/Tendo33/parq-cli.git
-cd parq-cli
-pip install -e .
-```
-
-### Install via pip (Coming Soon)
-
 ```bash
 pip install parq-cli
 ```
@@ -261,7 +251,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📮 Contact
 
-- Author: Jinfeng Sun
+- Author: SimonSun
 - Project URL: https://github.com/Tendo33/parq-cli
 
 ---
