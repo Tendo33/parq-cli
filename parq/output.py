@@ -135,7 +135,6 @@ class OutputFormatter:
             table.add_row(*row_values)
 
         console.print(table)
-        # {{END MODIFICATIONS}}
 
     @staticmethod
     def print_count(count: int) -> None:
@@ -189,12 +188,6 @@ class OutputFormatter:
             total_rows: Total number of rows in source file
             elapsed_time: Time taken to split in seconds
         """
-        # {{CHENGQI:
-        # Action: Added; Timestamp: 2025-10-14 21:35:00 +08:00;
-        # Reason: Add output formatter for split command results;
-        # Principle_Applied: Consistent output formatting, User-friendly display
-        # }}
-        # {{START MODIFICATIONS}}
 
         # Calculate statistics
         num_files = len(output_files)
@@ -243,5 +236,3 @@ class OutputFormatter:
                 table.add_row(str(idx), str(file_path), size)
 
         console.print(table)
-
-        # {{END MODIFICATIONS}}

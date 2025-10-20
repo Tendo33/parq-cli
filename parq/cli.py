@@ -202,12 +202,6 @@ def split(
         # Split into subdirectory
         parq split data.parquet -f 3 -n "output/part-%02d.parquet"
     """
-    # {{CHENGQI:
-    # Action: Added; Timestamp: 2025-10-14 21:32:00 +08:00;
-    # Reason: Add CLI command for split functionality;
-    # Principle_Applied: Consistent error handling pattern, User-friendly output
-    # }}
-    # {{START MODIFICATIONS}}
     try:
         # Validate mutually exclusive parameters
         if file_count is None and record_count is None:
@@ -281,8 +275,6 @@ def split(
     except Exception as e:
         formatter.print_error(f"Failed to split Parquet file: {e}")
         raise typer.Exit(code=1)
-
-    # {{END MODIFICATIONS}}
 
 
 if __name__ == "__main__":

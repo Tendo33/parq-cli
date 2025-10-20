@@ -239,12 +239,6 @@ class ParquetReader:
             ValueError: If both or neither of file_count/record_count are provided
             IOError: If file write fails
         """
-        # {{CHENGQI:
-        # Action: Added; Timestamp: 2025-10-14 21:30:00 +08:00;
-        # Reason: Implement split command functionality;
-        # Principle_Applied: SOLID-S (Single Responsibility), DRY, Error handling
-        # }}
-        # {{START MODIFICATIONS}}
 
         # Validate parameters
         if file_count is None and record_count is None:
@@ -344,8 +338,6 @@ class ParquetReader:
                 if writer:
                     writer.close()
 
-        # {{END MODIFICATIONS}}
-
         return output_files
 
     def _get_compression_type(self) -> str:
@@ -355,11 +347,6 @@ class ParquetReader:
         Returns:
             Compression type string (e.g., 'SNAPPY', 'GZIP', 'NONE')
         """
-        # {{CHENGUI:
-        # Action: Added; Timestamp: 2025-10-14 21:30:00 +08:00;
-        # Reason: Helper method to extract compression type for split files;
-        # Principle_Applied: DRY, Encapsulation
-        # }}
         if self.num_row_groups > 0:
             compression = self.metadata.row_group(0).column(0).compression
             return compression
