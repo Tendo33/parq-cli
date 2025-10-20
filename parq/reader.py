@@ -194,6 +194,7 @@ class ParquetReader:
         output_pattern: str,
         file_count: Optional[int] = None,
         record_count: Optional[int] = None,
+        progress_callback: Optional[callable] = None,
     ) -> List[Path]:
         """
         Split parquet file into multiple files.
@@ -202,6 +203,7 @@ class ParquetReader:
             output_pattern: Output file name pattern (e.g., 'result-%06d.parquet')
             file_count: Number of output files (mutually exclusive with record_count)
             record_count: Number of records per file (mutually exclusive with file_count)
+            progress_callback: Optional callback function(current, total) for progress updates
 
         Returns:
             List of created file paths
@@ -274,6 +276,7 @@ class ParquetReader:
             # Read and distribute data in batches
             current_file_idx = 0
             current_file_rows = 0
+            rows_processed = 0
 
             # Use batch reader for memory efficiency
             batch_size = min(10000, rows_per_file)  # Read in chunks
@@ -297,6 +300,11 @@ class ParquetReader:
 
                     batch_offset += rows_to_write
                     current_file_rows += rows_to_write
+                    rows_processed += rows_to_write
+
+                    # Report progress
+                    if progress_callback:
+                        progress_callback(rows_processed, total_rows)
 
                     # Move to next file if current is full
                     if current_file_rows >= rows_per_file and current_file_idx < num_files - 1:

@@ -226,13 +226,40 @@ def split(
         # Start timer
         start_time = time.time()
 
-        # Create reader and perform split
+        # Create reader
         reader = ParquetReader(str(file))
-        output_files = reader.split_file(
-            output_pattern=name_format,
-            file_count=file_count,
-            record_count=record_count,
+
+        # Setup progress bar
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeRemainingColumn,
         )
+
+        from parq.output import console
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"[cyan]Splitting {file.name}...", total=reader.num_rows)
+
+            def update_progress(current: int, total: int):
+                progress.update(task, completed=current)
+
+            # Perform split with progress callback
+            output_files = reader.split_file(
+                output_pattern=name_format,
+                file_count=file_count,
+                record_count=record_count,
+                progress_callback=update_progress,
+            )
 
         # Calculate elapsed time
         elapsed_time = time.time() - start_time
