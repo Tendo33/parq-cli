@@ -103,13 +103,13 @@ class OutputFormatter:
         """
         Print PyArrow table as a Rich table.
 
+        Optimized to avoid pandas conversion, directly reading from PyArrow table
+        for better performance and reduced memory usage.
+
         Args:
             arrow_table: PyArrow table to display
             title: Title for the table
         """
-        # Convert to pandas for easier display
-        df = arrow_table.to_pandas()
-
         table = Table(
             title=f"[bold blue]📄 {title}[/bold blue]",
             box=box.ROUNDED,
@@ -117,13 +117,18 @@ class OutputFormatter:
             header_style="bold magenta",
         )
 
-        # Add columns
-        for col in df.columns:
-            table.add_column(str(col), style="cyan")
+        # Add columns directly from PyArrow schema
+        for col_name in arrow_table.column_names:
+            table.add_column(str(col_name), style="cyan")
 
-        # Add rows
-        for _, row in df.iterrows():
-            table.add_row(*[str(val) for val in row])
+        # Add rows directly from PyArrow table (zero-copy access)
+        # This avoids the overhead of pandas conversion and iterrows()
+        for row_idx in range(arrow_table.num_rows):
+            row_values = []
+            for col_name in arrow_table.column_names:
+                value = arrow_table[col_name][row_idx].as_py()
+                row_values.append(str(value))
+            table.add_row(*row_values)
 
         console.print(table)
 

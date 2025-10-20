@@ -116,18 +116,40 @@ class ParquetReader:
         """
         Read first n rows.
 
+        Optimized to only read necessary row groups for large files,
+        significantly reducing memory usage and improving performance.
+
         Args:
             n: Number of rows to read
 
         Returns:
             PyArrow table with first n rows
         """
-        table = self._parquet_file.read()
-        return table.slice(0, min(n, self.num_rows))
+        # Fast path: small files or single row group
+        # Avoids overhead of row group calculation
+        if self.num_rows <= n * 10 or self.num_row_groups == 1:
+            table = self._parquet_file.read()
+            return table.slice(0, min(n, self.num_rows))
+
+        # Optimized path: only read necessary row groups
+        # For large files, this can reduce I/O by 10-100x
+        rows_read = 0
+        row_groups = []
+        for i in range(self.num_row_groups):
+            row_groups.append(i)
+            rows_read += self.metadata.row_group(i).num_rows
+            if rows_read >= n:
+                break
+
+        table = self._parquet_file.read_row_groups(row_groups)
+        return table.slice(0, n)
 
     def read_tail(self, n: int = 5) -> pa.Table:
         """
         Read last n rows.
+
+        Optimized to only read necessary row groups from the end of the file,
+        significantly reducing memory usage and improving performance for large files.
 
         Args:
             n: Number of rows to read
@@ -135,8 +157,24 @@ class ParquetReader:
         Returns:
             PyArrow table with last n rows
         """
-        table = self._parquet_file.read()
-        start = max(0, self.num_rows - n)
+        # Fast path: small files or single row group
+        if self.num_rows <= n * 10 or self.num_row_groups == 1:
+            table = self._parquet_file.read()
+            start = max(0, self.num_rows - n)
+            return table.slice(start, n)
+
+        # Optimized path: read from end, only necessary row groups
+        # Start from last row group and work backwards
+        rows_needed = n
+        row_groups = []
+        for i in range(self.num_row_groups - 1, -1, -1):
+            row_groups.insert(0, i)  # Maintain order
+            rows_needed -= self.metadata.row_group(i).num_rows
+            if rows_needed <= 0:
+                break
+
+        table = self._parquet_file.read_row_groups(row_groups)
+        start = max(0, len(table) - n)
         return table.slice(start, n)
 
     def read_columns(self, columns: Optional[List[str]] = None) -> pa.Table:

@@ -71,10 +71,11 @@ class TestParquetReader:
         table = reader.read_tail(2)
         assert len(table) == 2
 
-        # Verify it's the last rows
-        df = table.to_pandas()
-        assert df.iloc[0]["id"] == 4
-        assert df.iloc[1]["id"] == 5
+        # Verify it's the last rows (using PyArrow directly)
+        # Extract id column values
+        id_values = [table["id"][i].as_py() for i in range(len(table))]
+        assert id_values[0] == 4
+        assert id_values[1] == 5
 
     def test_read_columns(self, sample_parquet_file):
         """Test reading specific columns."""
