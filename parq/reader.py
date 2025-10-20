@@ -9,6 +9,11 @@ from typing import List, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+# Heuristic multiplier for determining when to use fast path vs optimized path
+# Files with <= n * FAST_PATH_ROWS_MULTIPLIER rows use full read + slice (simpler)
+# Larger files use row group optimization to reduce I/O
+FAST_PATH_ROWS_MULTIPLIER = 10
+
 
 class ParquetReader:
     """Parquet file reader with metadata inspection capabilities."""
@@ -120,14 +125,25 @@ class ParquetReader:
         significantly reducing memory usage and improving performance.
 
         Args:
-            n: Number of rows to read
+            n: Number of rows to read (must be >= 0)
 
         Returns:
             PyArrow table with first n rows
+
+        Raises:
+            ValueError: If n < 0
         """
+        # Input validation
+        if n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
+
+        # Guard: zero rows requested - return empty table with correct schema
+        if n == 0:
+            return pa.table({field.name: pa.array([], type=field.type) for field in self.schema})
+
         # Fast path: small files or single row group
         # Avoids overhead of row group calculation
-        if self.num_rows <= n * 10 or self.num_row_groups == 1:
+        if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
             table = self._parquet_file.read()
             return table.slice(0, min(n, self.num_rows))
 
@@ -152,13 +168,24 @@ class ParquetReader:
         significantly reducing memory usage and improving performance for large files.
 
         Args:
-            n: Number of rows to read
+            n: Number of rows to read (must be >= 0)
 
         Returns:
             PyArrow table with last n rows
+
+        Raises:
+            ValueError: If n < 0
         """
+        # Input validation
+        if n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
+
+        # Guard: zero rows requested - return empty table with correct schema
+        if n == 0:
+            return pa.table({field.name: pa.array([], type=field.type) for field in self.schema})
+
         # Fast path: small files or single row group
-        if self.num_rows <= n * 10 or self.num_row_groups == 1:
+        if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
             table = self._parquet_file.read()
             start = max(0, self.num_rows - n)
             return table.slice(start, n)

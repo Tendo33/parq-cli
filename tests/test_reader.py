@@ -63,6 +63,20 @@ class TestParquetReader:
         table = reader.read_head(10)
         assert len(table) == 5
 
+    def test_read_head_edge_cases(self, sample_parquet_file):
+        """Test read_head with edge cases."""
+        reader = ParquetReader(str(sample_parquet_file))
+
+        # Test n=0 returns empty table with correct schema
+        table = reader.read_head(0)
+        assert len(table) == 0
+        assert table.num_columns == reader.num_columns
+        assert table.column_names == reader.schema.names
+
+        # Test negative n raises ValueError
+        with pytest.raises(ValueError, match="must be non-negative"):
+            reader.read_head(-1)
+
     def test_read_tail(self, sample_parquet_file):
         """Test reading last N rows."""
         reader = ParquetReader(str(sample_parquet_file))
@@ -71,11 +85,24 @@ class TestParquetReader:
         table = reader.read_tail(2)
         assert len(table) == 2
 
-        # Verify it's the last rows (using PyArrow directly)
-        # Extract id column values
-        id_values = [table["id"][i].as_py() for i in range(len(table))]
+        # Verify it's the last rows (using PyArrow's idiomatic to_pylist method)
+        id_values = table["id"].to_pylist()
         assert id_values[0] == 4
         assert id_values[1] == 5
+
+    def test_read_tail_edge_cases(self, sample_parquet_file):
+        """Test read_tail with edge cases."""
+        reader = ParquetReader(str(sample_parquet_file))
+
+        # Test n=0 returns empty table with correct schema
+        table = reader.read_tail(0)
+        assert len(table) == 0
+        assert table.num_columns == reader.num_columns
+        assert table.column_names == reader.schema.names
+
+        # Test negative n raises ValueError
+        with pytest.raises(ValueError, match="must be non-negative"):
+            reader.read_tail(-5)
 
     def test_read_columns(self, sample_parquet_file):
         """Test reading specific columns."""

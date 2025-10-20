@@ -123,13 +123,15 @@ class OutputFormatter:
         for col_name in arrow_table.column_names:
             table.add_column(str(col_name), style="cyan")
 
-        # Add rows directly from PyArrow table (zero-copy access)
-        # This avoids the overhead of pandas conversion and iterrows()
+        # Add rows using columnar access for better performance
+        # Convert columns to Python lists first, leveraging PyArrow's optimized operations
+        columns_data = [arrow_table[col_name].to_pylist() for col_name in arrow_table.column_names]
+
+        # Transpose and iterate over rows
         for row_idx in range(arrow_table.num_rows):
-            row_values = []
-            for col_name in arrow_table.column_names:
-                value = arrow_table[col_name][row_idx].as_py()
-                row_values.append(str(value))
+            row_values = [
+                str(columns_data[col_idx][row_idx]) for col_idx in range(len(columns_data))
+            ]
             table.add_row(*row_values)
 
         console.print(table)
