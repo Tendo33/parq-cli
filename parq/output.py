@@ -115,6 +115,8 @@ class OutputFormatter:
             box=box.ROUNDED,
             show_header=True,
             header_style="bold magenta",
+            padding=(0, 1),
+            show_lines=True,
         )
 
         # Add columns directly from PyArrow schema
@@ -131,6 +133,7 @@ class OutputFormatter:
             table.add_row(*row_values)
 
         console.print(table)
+        # {{END MODIFICATIONS}}
 
     @staticmethod
     def print_count(count: int) -> None:
