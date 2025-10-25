@@ -9,6 +9,11 @@ from typing import List, Optional
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+# Heuristic multiplier for determining when to use fast path vs optimized path
+# Files with <= n * FAST_PATH_ROWS_MULTIPLIER rows use full read + slice (simpler)
+# Larger files use row group optimization to reduce I/O
+FAST_PATH_ROWS_MULTIPLIER = 10
+
 
 class ParquetReader:
     """Parquet file reader with metadata inspection capabilities."""
@@ -116,27 +121,87 @@ class ParquetReader:
         """
         Read first n rows.
 
+        Optimized to only read necessary row groups for large files,
+        significantly reducing memory usage and improving performance.
+
         Args:
-            n: Number of rows to read
+            n: Number of rows to read (must be >= 0)
 
         Returns:
             PyArrow table with first n rows
+
+        Raises:
+            ValueError: If n < 0
         """
-        table = self._parquet_file.read()
-        return table.slice(0, min(n, self.num_rows))
+        # Input validation
+        if n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
+
+        # Guard: zero rows requested - return empty table with correct schema
+        if n == 0:
+            return pa.table({field.name: pa.array([], type=field.type) for field in self.schema})
+
+        # Fast path: small files or single row group
+        # Avoids overhead of row group calculation
+        if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
+            table = self._parquet_file.read()
+            return table.slice(0, min(n, self.num_rows))
+
+        # Optimized path: only read necessary row groups
+        # For large files, this can reduce I/O by 10-100x
+        rows_read = 0
+        row_groups = []
+        for i in range(self.num_row_groups):
+            row_groups.append(i)
+            rows_read += self.metadata.row_group(i).num_rows
+            if rows_read >= n:
+                break
+
+        table = self._parquet_file.read_row_groups(row_groups)
+        return table.slice(0, n)
 
     def read_tail(self, n: int = 5) -> pa.Table:
         """
         Read last n rows.
 
+        Optimized to only read necessary row groups from the end of the file,
+        significantly reducing memory usage and improving performance for large files.
+
         Args:
-            n: Number of rows to read
+            n: Number of rows to read (must be >= 0)
 
         Returns:
             PyArrow table with last n rows
+
+        Raises:
+            ValueError: If n < 0
         """
-        table = self._parquet_file.read()
-        start = max(0, self.num_rows - n)
+        # Input validation
+        if n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
+
+        # Guard: zero rows requested - return empty table with correct schema
+        if n == 0:
+            return pa.table({field.name: pa.array([], type=field.type) for field in self.schema})
+
+        # Fast path: small files or single row group
+        if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
+            table = self._parquet_file.read()
+            start = max(0, self.num_rows - n)
+            return table.slice(start, n)
+
+        # Optimized path: read from end, only necessary row groups
+        # Start from last row group and work backwards
+        rows_needed = n
+        row_groups = []
+        for i in range(self.num_row_groups - 1, -1, -1):
+            row_groups.insert(0, i)  # Maintain order
+            rows_needed -= self.metadata.row_group(i).num_rows
+            if rows_needed <= 0:
+                break
+
+        table = self._parquet_file.read_row_groups(row_groups)
+        start = max(0, len(table) - n)
         return table.slice(start, n)
 
     def read_columns(self, columns: Optional[List[str]] = None) -> pa.Table:
@@ -156,6 +221,7 @@ class ParquetReader:
         output_pattern: str,
         file_count: Optional[int] = None,
         record_count: Optional[int] = None,
+        progress_callback: Optional[callable] = None,
     ) -> List[Path]:
         """
         Split parquet file into multiple files.
@@ -164,6 +230,7 @@ class ParquetReader:
             output_pattern: Output file name pattern (e.g., 'result-%06d.parquet')
             file_count: Number of output files (mutually exclusive with record_count)
             record_count: Number of records per file (mutually exclusive with file_count)
+            progress_callback: Optional callback function(current, total) for progress updates
 
         Returns:
             List of created file paths
@@ -172,12 +239,6 @@ class ParquetReader:
             ValueError: If both or neither of file_count/record_count are provided
             IOError: If file write fails
         """
-        # {{CHENGQI:
-        # Action: Added; Timestamp: 2025-10-14 21:30:00 +08:00;
-        # Reason: Implement split command functionality;
-        # Principle_Applied: SOLID-S (Single Responsibility), DRY, Error handling
-        # }}
-        # {{START MODIFICATIONS}}
 
         # Validate parameters
         if file_count is None and record_count is None:
@@ -236,6 +297,7 @@ class ParquetReader:
             # Read and distribute data in batches
             current_file_idx = 0
             current_file_rows = 0
+            rows_processed = 0
 
             # Use batch reader for memory efficiency
             batch_size = min(10000, rows_per_file)  # Read in chunks
@@ -259,6 +321,11 @@ class ParquetReader:
 
                     batch_offset += rows_to_write
                     current_file_rows += rows_to_write
+                    rows_processed += rows_to_write
+
+                    # Report progress
+                    if progress_callback:
+                        progress_callback(rows_processed, total_rows)
 
                     # Move to next file if current is full
                     if current_file_rows >= rows_per_file and current_file_idx < num_files - 1:
@@ -271,8 +338,6 @@ class ParquetReader:
                 if writer:
                     writer.close()
 
-        # {{END MODIFICATIONS}}
-
         return output_files
 
     def _get_compression_type(self) -> str:
@@ -282,11 +347,6 @@ class ParquetReader:
         Returns:
             Compression type string (e.g., 'SNAPPY', 'GZIP', 'NONE')
         """
-        # {{CHENGUI:
-        # Action: Added; Timestamp: 2025-10-14 21:30:00 +08:00;
-        # Reason: Helper method to extract compression type for split files;
-        # Principle_Applied: DRY, Encapsulation
-        # }}
         if self.num_row_groups > 0:
             compression = self.metadata.row_group(0).column(0).compression
             return compression

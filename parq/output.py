@@ -103,27 +103,36 @@ class OutputFormatter:
         """
         Print PyArrow table as a Rich table.
 
+        Optimized to avoid pandas conversion, directly reading from PyArrow table
+        for better performance and reduced memory usage.
+
         Args:
             arrow_table: PyArrow table to display
             title: Title for the table
         """
-        # Convert to pandas for easier display
-        df = arrow_table.to_pandas()
-
         table = Table(
             title=f"[bold blue]📄 {title}[/bold blue]",
             box=box.ROUNDED,
             show_header=True,
             header_style="bold magenta",
+            padding=(0, 1),
+            show_lines=True,
         )
 
-        # Add columns
-        for col in df.columns:
-            table.add_column(str(col), style="cyan")
+        # Add columns directly from PyArrow schema
+        for col_name in arrow_table.column_names:
+            table.add_column(str(col_name), style="cyan")
 
-        # Add rows
-        for _, row in df.iterrows():
-            table.add_row(*[str(val) for val in row])
+        # Add rows using columnar access for better performance
+        # Convert columns to Python lists first, leveraging PyArrow's optimized operations
+        columns_data = [arrow_table[col_name].to_pylist() for col_name in arrow_table.column_names]
+
+        # Transpose and iterate over rows
+        for row_idx in range(arrow_table.num_rows):
+            row_values = [
+                str(columns_data[col_idx][row_idx]) for col_idx in range(len(columns_data))
+            ]
+            table.add_row(*row_values)
 
         console.print(table)
 
@@ -179,12 +188,6 @@ class OutputFormatter:
             total_rows: Total number of rows in source file
             elapsed_time: Time taken to split in seconds
         """
-        # {{CHENGQI:
-        # Action: Added; Timestamp: 2025-10-14 21:35:00 +08:00;
-        # Reason: Add output formatter for split command results;
-        # Principle_Applied: Consistent output formatting, User-friendly display
-        # }}
-        # {{START MODIFICATIONS}}
 
         # Calculate statistics
         num_files = len(output_files)
@@ -233,5 +236,3 @@ class OutputFormatter:
                 table.add_row(str(idx), str(file_path), size)
 
         console.print(table)
-
-        # {{END MODIFICATIONS}}

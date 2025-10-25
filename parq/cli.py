@@ -202,12 +202,6 @@ def split(
         # Split into subdirectory
         parq split data.parquet -f 3 -n "output/part-%02d.parquet"
     """
-    # {{CHENGQI:
-    # Action: Added; Timestamp: 2025-10-14 21:32:00 +08:00;
-    # Reason: Add CLI command for split functionality;
-    # Principle_Applied: Consistent error handling pattern, User-friendly output
-    # }}
-    # {{START MODIFICATIONS}}
     try:
         # Validate mutually exclusive parameters
         if file_count is None and record_count is None:
@@ -226,13 +220,40 @@ def split(
         # Start timer
         start_time = time.time()
 
-        # Create reader and perform split
+        # Create reader
         reader = ParquetReader(str(file))
-        output_files = reader.split_file(
-            output_pattern=name_format,
-            file_count=file_count,
-            record_count=record_count,
+
+        # Setup progress bar
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeRemainingColumn,
         )
+
+        from parq.output import console
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"[cyan]Splitting {file.name}...", total=reader.num_rows)
+
+            def update_progress(current: int, total: int):
+                progress.update(task, completed=current)
+
+            # Perform split with progress callback
+            output_files = reader.split_file(
+                output_pattern=name_format,
+                file_count=file_count,
+                record_count=record_count,
+                progress_callback=update_progress,
+            )
 
         # Calculate elapsed time
         elapsed_time = time.time() - start_time
@@ -254,8 +275,6 @@ def split(
     except Exception as e:
         formatter.print_error(f"Failed to split Parquet file: {e}")
         raise typer.Exit(code=1)
-
-    # {{END MODIFICATIONS}}
 
 
 if __name__ == "__main__":
