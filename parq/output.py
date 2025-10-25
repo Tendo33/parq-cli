@@ -103,8 +103,8 @@ class OutputFormatter:
         """
         Print PyArrow table as a Rich table.
 
-        Optimized to avoid pandas conversion, directly reading from PyArrow table
-        for better performance and reduced memory usage.
+        Optimized to avoid pandas conversion and minimize memory usage by
+        converting data row-by-row using PyArrow's record batch iterator.
 
         Args:
             arrow_table: PyArrow table to display
@@ -123,16 +123,18 @@ class OutputFormatter:
         for col_name in arrow_table.column_names:
             table.add_column(str(col_name), style="cyan")
 
-        # Add rows using columnar access for better performance
-        # Convert columns to Python lists first, leveraging PyArrow's optimized operations
-        columns_data = [arrow_table[col_name].to_pylist() for col_name in arrow_table.column_names]
-
-        # Transpose and iterate over rows
-        for row_idx in range(arrow_table.num_rows):
-            row_values = [
-                str(columns_data[col_idx][row_idx]) for col_idx in range(len(columns_data))
-            ]
-            table.add_row(*row_values)
+        # Memory-efficient: Convert to Python dict row-by-row using iterator
+        # This avoids loading all data into memory at once
+        for batch in arrow_table.to_batches():
+            batch_dict = batch.to_pydict()
+            batch_size = len(batch)
+            
+            for row_idx in range(batch_size):
+                row_values = [
+                    str(batch_dict[col_name][row_idx]) 
+                    for col_name in arrow_table.column_names
+                ]
+                table.add_row(*row_values)
 
         console.print(table)
 
