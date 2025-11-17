@@ -229,6 +229,29 @@ ruff check --fix parq tests
 - [ ] Add diff command, compare the differences between two parquet files
 - [ ] Add merge command, merge multiple parquet files into one parquet file
 
+## 📦 Release Process (for maintainers)
+
+We use automated scripts to manage versions and releases:
+
+```bash
+# Bump version and create tag
+python scripts/bump_version.py patch  # 0.1.0 -> 0.1.1 (bug fixes)
+python scripts/bump_version.py minor  # 0.1.0 -> 0.2.0 (new features)
+python scripts/bump_version.py major  # 0.1.0 -> 1.0.0 (breaking changes)
+
+# Push to trigger GitHub Actions
+git push origin main
+git push origin v0.1.1  # Replace with actual version
+```
+
+GitHub Actions will automatically:
+- ✅ Check for version conflicts
+- ✅ Build the package
+- ✅ Publish to PyPI
+- ✅ Create GitHub Release
+
+See [scripts/README.md](scripts/README.md) for detailed documentation.
+
 ## 🤝 Contributing
 
 Issues and Pull Requests are welcome!
