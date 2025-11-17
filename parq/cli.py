@@ -19,12 +19,14 @@ app = typer.Typer(
 def _get_formatter():
     """Lazy load formatter to improve CLI startup time."""
     from parq.output import OutputFormatter
+
     return OutputFormatter()
 
 
 def _get_reader(file_path: str):
     """Lazy load reader to improve CLI startup time."""
     from parq.reader import ParquetReader
+
     return ParquetReader(file_path)
 
 
@@ -215,7 +217,7 @@ def split(
     """
     # Initialize formatter early for error messages
     formatter = _get_formatter()
-    
+
     try:
         # Validate mutually exclusive parameters
         if file_count is None and record_count is None:
@@ -233,6 +235,7 @@ def split(
 
         # Start timer
         import time
+
         start_time = time.time()
 
         # Create reader
@@ -273,7 +276,7 @@ def split(
         # Calculate elapsed time
         elapsed_time = time.time() - start_time
 
-        # Display results  
+        # Display results
         formatter.print_split_result(
             source_file=file,
             output_files=output_files,

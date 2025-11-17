@@ -128,11 +128,10 @@ class OutputFormatter:
         for batch in arrow_table.to_batches():
             batch_dict = batch.to_pydict()
             batch_size = len(batch)
-            
+
             for row_idx in range(batch_size):
                 row_values = [
-                    str(batch_dict[col_name][row_idx]) 
-                    for col_name in arrow_table.column_names
+                    str(batch_dict[col_name][row_idx]) for col_name in arrow_table.column_names
                 ]
                 table.add_row(*row_values)
 
