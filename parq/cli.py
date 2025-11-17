@@ -3,15 +3,11 @@ CLI application module.
 Command-line interface for parq-cli tool.
 """
 
-import time
 from pathlib import Path
 from typing import Optional
 
 import typer
 from typing_extensions import Annotated
-
-from parq.output import OutputFormatter
-from parq.reader import ParquetReader
 
 app = typer.Typer(
     name="parq",
@@ -19,7 +15,17 @@ app = typer.Typer(
     add_completion=False,
 )
 
-formatter = OutputFormatter()
+
+def _get_formatter():
+    """Lazy load formatter to improve CLI startup time."""
+    from parq.output import OutputFormatter
+    return OutputFormatter()
+
+
+def _get_reader(file_path: str):
+    """Lazy load reader to improve CLI startup time."""
+    from parq.reader import ParquetReader
+    return ParquetReader(file_path)
 
 
 @app.callback(invoke_without_command=True)
@@ -54,8 +60,9 @@ def meta(
         parq meta data.parquet
     """
     try:
-        reader = ParquetReader(str(file))
+        reader = _get_reader(str(file))
         metadata = reader.get_metadata_dict()
+        formatter = _get_formatter()
         formatter.print_metadata(metadata)
     except FileNotFoundError as e:
         formatter.print_error(str(e))
@@ -77,8 +84,9 @@ def schema(
         parq schema data.parquet
     """
     try:
-        reader = ParquetReader(str(file))
+        reader = _get_reader(str(file))
         schema_info = reader.get_schema_info()
+        formatter = _get_formatter()
         formatter.print_schema(schema_info)
     except FileNotFoundError as e:
         formatter.print_error(str(e))
@@ -105,8 +113,9 @@ def head(
         parq head -n 10 data.parquet
     """
     try:
-        reader = ParquetReader(str(file))
+        reader = _get_reader(str(file))
         table = reader.read_head(n)
+        formatter = _get_formatter()
         formatter.print_table(table, f"First {n} Rows")
     except FileNotFoundError as e:
         formatter.print_error(str(e))
@@ -133,8 +142,9 @@ def tail(
         parq tail -n 10 data.parquet
     """
     try:
-        reader = ParquetReader(str(file))
+        reader = _get_reader(str(file))
         table = reader.read_tail(n)
+        formatter = _get_formatter()
         formatter.print_table(table, f"Last {n} Rows")
     except FileNotFoundError as e:
         formatter.print_error(str(e))
@@ -156,7 +166,8 @@ def count(
         parq count data.parquet
     """
     try:
-        reader = ParquetReader(str(file))
+        reader = _get_reader(str(file))
+        formatter = _get_formatter()
         formatter.print_count(reader.num_rows)
     except FileNotFoundError as e:
         formatter.print_error(str(e))
@@ -202,6 +213,9 @@ def split(
         # Split into subdirectory
         parq split data.parquet -f 3 -n "output/part-%02d.parquet"
     """
+    # Initialize formatter early for error messages
+    formatter = _get_formatter()
+    
     try:
         # Validate mutually exclusive parameters
         if file_count is None and record_count is None:
@@ -218,10 +232,11 @@ def split(
             raise typer.Exit(code=1)
 
         # Start timer
+        import time
         start_time = time.time()
 
         # Create reader
-        reader = ParquetReader(str(file))
+        reader = _get_reader(str(file))
 
         # Setup progress bar
         from rich.progress import (
@@ -258,7 +273,7 @@ def split(
         # Calculate elapsed time
         elapsed_time = time.time() - start_time
 
-        # Display results
+        # Display results  
         formatter.print_split_result(
             source_file=file,
             output_files=output_files,
