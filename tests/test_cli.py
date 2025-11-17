@@ -4,6 +4,7 @@ Tests for CLI commands.
 
 from typer.testing import CliRunner
 
+from parq import __version__
 from parq.cli import app
 
 runner = CliRunner()
@@ -22,7 +23,7 @@ class TestCLI:
         """Test version option."""
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert __version__ in result.output
 
     def test_cli_file_not_found(self):
         """Test error handling for non-existent file."""
