@@ -262,7 +262,7 @@ def split(
         ) as progress:
             task = progress.add_task(f"[cyan]Splitting {file.name}...", total=reader.num_rows)
 
-            def update_progress(current: int, total: int):
+            def update_progress(current: int, _total: int):
                 progress.update(task, completed=current)
 
             # Perform split with progress callback

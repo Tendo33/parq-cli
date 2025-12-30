@@ -52,3 +52,8 @@ packages = ["parq"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+
+[dependency-groups]
+dev = [
+    "vulture>=2.14",
+]
