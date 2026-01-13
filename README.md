@@ -5,7 +5,7 @@
 
 A powerful command-line tool for Apache Parquet files 🚀
 
-English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README.zh.md)
+English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README_CN.md)
 
 ## ✨ Features
 
