@@ -4,10 +4,9 @@ Command-line interface for parq-cli tool.
 """
 
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Annotated, Any, Callable, Optional
 
 import typer
-from typing_extensions import Annotated
 
 app = typer.Typer(
     name="parq",
