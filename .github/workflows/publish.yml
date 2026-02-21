@@ -6,7 +6,33 @@ on:
       - "v*" # 当推送 v 开头的 tag 时触发（如 v0.1.0, v1.0.0）
 
 jobs:
+  pre-publish-tests:
+    name: Pre-publish tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: 🧪 Run tests
+        run: pytest
+
   build-and-publish:
+    needs: pre-publish-tests
     runs-on: ubuntu-latest
     permissions:
       contents: write

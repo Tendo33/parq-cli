@@ -4,7 +4,7 @@ Command-line interface for parq-cli tool.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import typer
 from typing_extensions import Annotated
@@ -28,6 +28,25 @@ def _get_reader(file_path: str):
     from parq.reader import ParquetReader
 
     return ParquetReader(file_path)
+
+
+def _run_with_error_handling(
+    operation: Callable[[Any], None],
+    *,
+    generic_error_prefix: str,
+) -> None:
+    """Execute a CLI operation with consistent error handling."""
+    formatter = _get_formatter()
+    try:
+        operation(formatter)
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as e:
+        formatter.print_error(str(e))
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        formatter.print_error(f"{generic_error_prefix}: {e}")
+        raise typer.Exit(code=1) from e
 
 
 @app.callback(invoke_without_command=True)
@@ -61,17 +80,12 @@ def meta(
 
         parq meta data.parquet
     """
-    try:
+    def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
         metadata = reader.get_metadata_dict()
-        formatter = _get_formatter()
         formatter.print_metadata(metadata)
-    except FileNotFoundError as e:
-        formatter.print_error(str(e))
-        raise typer.Exit(code=1)
-    except Exception as e:
-        formatter.print_error(f"Failed to read Parquet file: {e}")
-        raise typer.Exit(code=1)
+
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
 
 
 @app.command()
@@ -85,17 +99,12 @@ def schema(
 
         parq schema data.parquet
     """
-    try:
+    def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
         schema_info = reader.get_schema_info()
-        formatter = _get_formatter()
         formatter.print_schema(schema_info)
-    except FileNotFoundError as e:
-        formatter.print_error(str(e))
-        raise typer.Exit(code=1)
-    except Exception as e:
-        formatter.print_error(f"Failed to read Parquet file: {e}")
-        raise typer.Exit(code=1)
+
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
 
 
 @app.command()
@@ -114,17 +123,12 @@ def head(
         # Show first 10 rows
         parq head -n 10 data.parquet
     """
-    try:
+    def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
         table = reader.read_head(n)
-        formatter = _get_formatter()
         formatter.print_table(table, f"First {n} Rows")
-    except FileNotFoundError as e:
-        formatter.print_error(str(e))
-        raise typer.Exit(code=1)
-    except Exception as e:
-        formatter.print_error(f"Failed to read Parquet file: {e}")
-        raise typer.Exit(code=1)
+
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
 
 
 @app.command()
@@ -143,17 +147,12 @@ def tail(
         # Show last 10 rows
         parq tail -n 10 data.parquet
     """
-    try:
+    def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
         table = reader.read_tail(n)
-        formatter = _get_formatter()
         formatter.print_table(table, f"Last {n} Rows")
-    except FileNotFoundError as e:
-        formatter.print_error(str(e))
-        raise typer.Exit(code=1)
-    except Exception as e:
-        formatter.print_error(f"Failed to read Parquet file: {e}")
-        raise typer.Exit(code=1)
+
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
 
 
 @app.command()
@@ -167,16 +166,11 @@ def count(
 
         parq count data.parquet
     """
-    try:
+    def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
-        formatter = _get_formatter()
         formatter.print_count(reader.num_rows)
-    except FileNotFoundError as e:
-        formatter.print_error(str(e))
-        raise typer.Exit(code=1)
-    except Exception as e:
-        formatter.print_error(f"Failed to read Parquet file: {e}")
-        raise typer.Exit(code=1)
+
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
 
 
 @app.command()

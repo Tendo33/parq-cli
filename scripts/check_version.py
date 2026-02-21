@@ -14,6 +14,9 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import List
+
+from packaging.version import InvalidVersion, Version
 
 
 def get_local_version(pyproject_path: Path) -> str:
@@ -25,28 +28,49 @@ def get_local_version(pyproject_path: Path) -> str:
     return match.group(1)
 
 
-def get_pypi_versions(package_name: str) -> list:
+def get_pypi_versions(package_name: str) -> List[str]:
     """从 PyPI 获取已发布的版本列表"""
     url = f"https://pypi.org/pypi/{package_name}/json"
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(url, timeout=10) as response:
             data = json.loads(response.read())
             return list(data["releases"].keys())
     except urllib.error.HTTPError as e:
         if e.code == 404:
             # 包不存在,这是第一次发布
             return []
-        raise
+        raise RuntimeError(f"Unable to fetch versions from PyPI: {e}") from e
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise RuntimeError(f"Unable to fetch versions from PyPI: {e}") from e
     except Exception as e:
-        print(f"⚠️  警告: 无法从 PyPI 获取版本信息: {e}")
-        return []
+        raise RuntimeError(f"Unable to fetch versions from PyPI: {e}") from e
+
+
+def get_latest_version(versions: List[str]) -> str:
+    """使用 PEP 440 规则获取最新版本号。"""
+    parsed_versions = []
+    for version in versions:
+        try:
+            parsed_versions.append((Version(version), version))
+        except InvalidVersion:
+            continue
+
+    if not parsed_versions:
+        raise ValueError("No valid versions found in release list")
+
+    return max(parsed_versions, key=lambda item: item[0])[1]
 
 
 def check_version_conflict(local_version: str, pypi_versions: list) -> bool:
     """检查版本是否冲突"""
     if local_version in pypi_versions:
+        sorted_versions = sorted(
+            pypi_versions,
+            key=lambda v: Version(v) if _is_valid_version(v) else Version("0"),
+            reverse=True,
+        )
         print(f"❌ 错误: 版本 {local_version} 已在 PyPI 上存在!")
-        print(f"\n📋 PyPI 已有版本: {', '.join(sorted(pypi_versions, reverse=True)[:10])}")
+        print(f"\n📋 PyPI 已有版本: {', '.join(sorted_versions[:10])}")
         print("\n💡 解决方案:")
         print("   1. 使用脚本升级版本:")
         print(f"      python scripts/bump_version.py patch   # {local_version} -> 下一个补丁版本")
@@ -54,6 +78,15 @@ def check_version_conflict(local_version: str, pypi_versions: list) -> bool:
         print("   2. 手动修改 pyproject.toml 中的版本号")
         return True
     return False
+
+
+def _is_valid_version(version: str) -> bool:
+    """检查版本号是否符合 PEP 440。"""
+    try:
+        Version(version)
+        return True
+    except InvalidVersion:
+        return False
 
 
 def main():
@@ -81,7 +114,11 @@ def main():
     print("🔍 检查 PyPI 版本...")
 
     # 获取 PyPI 版本
-    pypi_versions = get_pypi_versions(package_name)
+    try:
+        pypi_versions = get_pypi_versions(package_name)
+    except RuntimeError as e:
+        print(f"❌ 错误: {e}")
+        sys.exit(1)
 
     if not pypi_versions:
         print("✅ 这是首次发布到 PyPI")
@@ -92,7 +129,7 @@ def main():
         sys.exit(1)
 
     print("✅ 版本检查通过! 可以发布到 PyPI")
-    print(f"📋 PyPI 最新版本: {max(pypi_versions, key=lambda v: [int(x) for x in v.split('.')])}")
+    print(f"📋 PyPI 最新版本: {get_latest_version(pypi_versions)}")
 
 
 if __name__ == "__main__":

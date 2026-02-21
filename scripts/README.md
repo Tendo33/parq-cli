@@ -50,6 +50,7 @@ python scripts/check_version.py
 **使用场景:**
 - ✅ 手动发布前检查
 - ✅ CI/CD 流程中自动检查 (已集成到 `.github/workflows/publish.yml`)
+- ✅ 网络异常时快速失败,避免误判为“首次发布”
 
 ## 🚀 完整发布流程
 
@@ -120,9 +121,11 @@ git push origin v0.1.1
 
 **工作原理:**
 1. 当推送 `v*` tag 时触发 workflow
-2. 自动检查版本是否已存在于 PyPI
-3. 如果冲突,立即失败并提示
-4. 通过检查后继续构建和发布
+2. 自动在 Linux/macOS/Windows 上执行测试
+3. 自动检查版本是否已存在于 PyPI
+4. 如果网络异常,立即失败并提示（需重试）
+5. 如果冲突,立即失败并提示
+6. 通过检查后继续构建和发布
 
 ## ⚠️ 常见问题
 
@@ -178,4 +181,3 @@ git push origin :refs/tags/v0.1.1
 - 查看脚本源码: `scripts/bump_version.py`, `scripts/check_version.py`
 - 查看 CI 配置: `.github/workflows/publish.yml`
 - 提交 Issue: [GitHub Issues](https://github.com/Tendo33/parq-cli/issues)
-

@@ -2,6 +2,7 @@
 Tests for CLI commands.
 """
 
+import pytest
 from typer.testing import CliRunner
 
 from parq import __version__
@@ -73,30 +74,23 @@ class TestCLI:
         assert result.exit_code == 0
         assert "5" in result.output
 
-    def test_schema_file_not_found(self):
-        """Test schema command with non-existent file."""
-        result = runner.invoke(app, ["schema", "nonexistent.parquet"])
-        assert result.exit_code != 0
+    @pytest.mark.parametrize("command", ["meta", "schema", "head", "tail", "count"])
+    def test_read_commands_file_not_found(self, command):
+        """Test read commands handle non-existent file gracefully."""
+        result = runner.invoke(app, [command, "nonexistent.parquet"])
+        assert result.exit_code == 1
+        assert "File not found" in result.output
+        assert "Traceback" not in result.output
+        assert "UnboundLocalError" not in result.output
 
-    def test_head_file_not_found(self):
-        """Test head command with non-existent file."""
-        result = runner.invoke(app, ["head", "nonexistent.parquet"])
-        assert result.exit_code != 0
-
-    def test_tail_file_not_found(self):
-        """Test tail command with non-existent file."""
-        result = runner.invoke(app, ["tail", "nonexistent.parquet"])
-        assert result.exit_code != 0
-
-    def test_count_file_not_found(self):
-        """Test count command with non-existent file."""
-        result = runner.invoke(app, ["count", "nonexistent.parquet"])
-        assert result.exit_code != 0
-
-    def test_meta_file_not_found(self):
-        """Test meta command with non-existent file."""
-        result = runner.invoke(app, ["meta", "nonexistent.parquet"])
-        assert result.exit_code != 0
+    @pytest.mark.parametrize("command", ["head", "tail"])
+    def test_preview_commands_negative_n(self, command, sample_parquet_file):
+        """Test head/tail reject negative row count gracefully."""
+        result = runner.invoke(app, [command, "-n", "-1", str(sample_parquet_file)])
+        assert result.exit_code == 1
+        assert "non-negative" in result.output
+        assert "Traceback" not in result.output
+        assert "UnboundLocalError" not in result.output
 
     def test_split_with_file_count(self, sample_parquet_file, tmp_path):
         """Test split command with --file-count option."""
@@ -163,7 +157,9 @@ class TestCLI:
         result = runner.invoke(
             app, ["split", "nonexistent.parquet", "--file-count", "2", "-n", output_pattern]
         )
-        assert result.exit_code != 0
+        assert result.exit_code == 1
+        assert "File not found" in result.output
+        assert "Traceback" not in result.output
 
     def test_split_custom_format(self, sample_parquet_file, tmp_path):
         """Test split with custom name format."""

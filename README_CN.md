@@ -87,6 +87,10 @@ parq tail FILE
 parq tail -n N FILE
 ```
 
+说明：
+- `N` 必须是非负整数。
+- 当输入文件不存在时，parq 会以退出码 `1` 退出并输出友好错误信息。
+
 ### 统计信息
 
 ```bash
@@ -192,6 +196,10 @@ $ parq schema data.parquet
 ### 安装开发依赖
 
 ```bash
+# 推荐使用 uv
+uv sync --extra dev
+
+# 或使用 pip
 pip install -e ".[dev]"
 ```
 
@@ -213,6 +221,9 @@ pytest --cov=parq --cov-report=html
 # 使用 Ruff 检查和自动修复
 
 ruff check --fix parq tests
+
+# 检查可能的无用代码
+vulture parq tests scripts
 ```
 
 ## 🗺️ 路线图

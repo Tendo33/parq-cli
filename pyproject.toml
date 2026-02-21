@@ -40,6 +40,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.7.0",
+    "vulture>=2.14",
 ]
 
 [build-system]
@@ -52,8 +53,3 @@ packages = ["parq"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
-
-[dependency-groups]
-dev = [
-    "vulture>=2.14",
-]

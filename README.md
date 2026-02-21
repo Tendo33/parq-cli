@@ -87,6 +87,10 @@ parq tail FILE
 parq tail -n N FILE
 ```
 
+Notes:
+- `N` must be a non-negative integer.
+- If the input file does not exist, parq exits with code `1` and prints a friendly error message.
+
 ### Statistics
 
 ```bash
@@ -192,6 +196,10 @@ $ parq schema data.parquet
 ### Install Development Dependencies
 
 ```bash
+# Recommended with uv
+uv sync --extra dev
+
+# Or with pip
 pip install -e ".[dev]"
 ```
 
@@ -213,6 +221,9 @@ pytest --cov=parq --cov-report=html
 # Check and auto-fix with Ruff
 
 ruff check --fix parq tests
+
+# Find dead code
+vulture parq tests scripts
 ```
 
 ## 🗺️ Roadmap
@@ -245,7 +256,9 @@ git push origin v0.1.1  # Replace with actual version
 ```
 
 GitHub Actions will automatically:
+- ✅ Run tests on Linux/macOS/Windows before publishing
 - ✅ Check for version conflicts
+- ✅ Fail fast on network errors while checking PyPI versions
 - ✅ Build the package
 - ✅ Publish to PyPI
 - ✅ Create GitHub Release

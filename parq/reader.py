@@ -4,7 +4,7 @@ Provides functionality to read and inspect Parquet files.
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -139,7 +139,7 @@ class ParquetReader:
 
         # Guard: zero rows requested - return empty table with correct schema
         if n == 0:
-            return pa.table({field.name: pa.array([], type=field.type) for field in self.schema})
+            return self._create_empty_table()
 
         # Fast path: small files or single row group
         # Avoids overhead of row group calculation
@@ -182,7 +182,7 @@ class ParquetReader:
 
         # Guard: zero rows requested - return empty table with correct schema
         if n == 0:
-            return pa.table({field.name: pa.array([], type=field.type) for field in self.schema})
+            return self._create_empty_table()
 
         # Fast path: small files or single row group
         if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
@@ -195,11 +195,12 @@ class ParquetReader:
         rows_needed = n
         row_groups = []
         for i in range(self.num_row_groups - 1, -1, -1):
-            row_groups.insert(0, i)  # Maintain order
+            row_groups.append(i)
             rows_needed -= self.metadata.row_group(i).num_rows
             if rows_needed <= 0:
                 break
 
+        row_groups.reverse()
         table = self._parquet_file.read_row_groups(row_groups)
         start = max(0, len(table) - n)
         return table.slice(start, n)
@@ -221,7 +222,7 @@ class ParquetReader:
         output_pattern: str,
         file_count: Optional[int] = None,
         record_count: Optional[int] = None,
-        progress_callback: Optional[callable] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Path]:
         """
         Split parquet file into multiple files.
@@ -351,3 +352,8 @@ class ParquetReader:
             compression = self.metadata.row_group(0).column(0).compression
             return compression
         return "SNAPPY"  # Default compression
+
+    def _create_empty_table(self) -> pa.Table:
+        """Create an empty table with the same schema as the source file."""
+        arrays = [pa.array([], type=field.type) for field in self.schema]
+        return pa.Table.from_arrays(arrays, names=self.schema.names)

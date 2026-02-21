@@ -3,6 +3,8 @@ Tests for ParquetReader.
 """
 
 import pytest
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from parq.reader import ParquetReader
 
@@ -29,6 +31,23 @@ class TestParquetReader:
         assert metadata["num_columns"] == 5
         assert "file_path" in metadata
         assert "created_by" in metadata
+
+    def test_get_metadata_includes_physical_columns_for_nested_schema(self, tmp_path):
+        """Test metadata includes physical column count when different from logical count."""
+        file_path = tmp_path / "nested.parquet"
+        table = pa.table(
+            {
+                "id": [1, 2, 3],
+                "meta": [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}, {"x": 3, "y": "c"}],
+            }
+        )
+        pq.write_table(table, file_path)
+
+        reader = ParquetReader(str(file_path))
+        metadata = reader.get_metadata_dict()
+
+        assert metadata["num_columns"] == 2
+        assert metadata["num_physical_columns"] > metadata["num_columns"]
 
     def test_get_schema(self, sample_parquet_file):
         """Test schema retrieval."""
@@ -72,10 +91,23 @@ class TestParquetReader:
         assert len(table) == 0
         assert table.num_columns == reader.num_columns
         assert table.column_names == reader.schema.names
+        assert table.schema == reader.schema
 
         # Test negative n raises ValueError
         with pytest.raises(ValueError, match="must be non-negative"):
             reader.read_head(-1)
+
+    def test_read_head_optimized_path_with_multiple_row_groups(self, tmp_path):
+        """Test read_head optimized path reads only needed row groups."""
+        file_path = tmp_path / "multi_rg.parquet"
+        table = pa.table({"id": list(range(40)), "value": [f"v{i}" for i in range(40)]})
+        pq.write_table(table, file_path, row_group_size=5)
+
+        reader = ParquetReader(str(file_path))
+        assert reader.num_row_groups > 1
+
+        result = reader.read_head(2)
+        assert result["id"].to_pylist() == [0, 1]
 
     def test_read_tail(self, sample_parquet_file):
         """Test reading last N rows."""
@@ -99,10 +131,23 @@ class TestParquetReader:
         assert len(table) == 0
         assert table.num_columns == reader.num_columns
         assert table.column_names == reader.schema.names
+        assert table.schema == reader.schema
 
         # Test negative n raises ValueError
         with pytest.raises(ValueError, match="must be non-negative"):
             reader.read_tail(-5)
+
+    def test_read_tail_optimized_path_with_multiple_row_groups(self, tmp_path):
+        """Test read_tail optimized path keeps output order correct."""
+        file_path = tmp_path / "multi_rg_tail.parquet"
+        table = pa.table({"id": list(range(40)), "value": [f"v{i}" for i in range(40)]})
+        pq.write_table(table, file_path, row_group_size=5)
+
+        reader = ParquetReader(str(file_path))
+        assert reader.num_row_groups > 1
+
+        result = reader.read_tail(3)
+        assert result["id"].to_pylist() == [37, 38, 39]
 
     def test_read_columns(self, sample_parquet_file):
         """Test reading specific columns."""
