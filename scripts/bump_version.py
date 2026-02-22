@@ -108,6 +108,11 @@ def main():
         print(f"❌ 错误: 找不到 pyproject.toml 文件: {pyproject_path}")
         sys.exit(1)
 
+    if not check_git_status():
+        print("❌ 错误: Git 工作区不干净，请先提交或暂存当前改动")
+        print("💡 提示: 运行 `git status --short` 查看未提交文件")
+        sys.exit(1)
+
     # 获取当前版本
     current_version = get_current_version(pyproject_path)
     print(f"📦 当前版本: {current_version}")

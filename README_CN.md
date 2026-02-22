@@ -114,7 +114,8 @@ parq split FILE -f N -n "output-%03d.parquet"
 parq split FILE -f 3 -n "output/part-%02d.parquet"
 ```
 
-将 Parquet 文件分割成多个较小的文件。你可以指定输出文件的数量（`--file-count`）或每个文件的记录数（`--record-count`）。输出文件名根据 `--name-format` 参数格式化（默认：`result-%06d.parquet`）。
+将 Parquet 文件分割成多个较小的文件。你可以指定输出文件的数量（`--file-count`）或每个文件的记录数（`--record-count`）。输出文件名根据 `--name-format` 参数格式化（默认：`result-%06d.parquet`）。  
+使用 `--file-count` 时，`N` 必须是正整数，且不能大于源文件总行数。
 
 ### 全局选项
 
@@ -165,6 +166,9 @@ $ parq meta nested.parquet
 │ created_by: parquet-cpp-arrow version 21.0.0                          │
 ╰────────────────────────────────────────────────────────────────────────╯
 ```
+
+说明：
+- `compression` 字段可能是单一压缩算法（如 `SNAPPY`），也可能在混合压缩场景下显示为逗号分隔的多个算法。
 
 ### Schema 展示
 

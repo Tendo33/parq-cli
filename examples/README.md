@@ -21,7 +21,7 @@ python examples/create_sample_data.py
 ### 1. 查看文件元数据
 
 ```bash
-parq examples/simple.parquet
+parq meta examples/simple.parquet
 ```
 
 输出示例：
@@ -40,35 +40,37 @@ parq examples/simple.parquet
 ### 2. 查看 Schema
 
 ```bash
-parq examples/simple.parquet --schema
+parq schema examples/simple.parquet
 ```
 
 ### 3. 预览数据（前 N 行）
 
 ```bash
-parq examples/simple.parquet --head 3
+parq head -n 3 examples/simple.parquet
 ```
 
 ### 4. 查看最后几行
 
 ```bash
-parq examples/simple.parquet --tail 2
+parq tail -n 2 examples/simple.parquet
 ```
 
 ### 5. 统计行数
 
 ```bash
-parq examples/simple.parquet --count
+parq count examples/simple.parquet
 ```
 
 ### 6. 组合使用
 
 ```bash
-# 同时显示 schema 和行数
-parq examples/simple.parquet --schema --count
+# 先查看 schema，再查看行数
+parq schema examples/simple.parquet
+parq count examples/simple.parquet
 
-# 显示 schema 和前 5 行
-parq examples/simple.parquet --schema --head 5
+# 查看 schema 后预览前 5 行
+parq schema examples/simple.parquet
+parq head -n 5 examples/simple.parquet
 ```
 
 ## 数据类型示例
@@ -76,7 +78,7 @@ parq examples/simple.parquet --schema --head 5
 查看包含多种数据类型的示例：
 
 ```bash
-parq examples/types.parquet --schema
+parq schema examples/types.parquet
 ```
 
 这将展示：
@@ -93,12 +95,11 @@ parq examples/types.parquet --schema
 
 ```bash
 # 查看前 10 行
-parq examples/large.parquet --head 10
+parq head -n 10 examples/large.parquet
 
 # 查看总行数
-parq examples/large.parquet --count
+parq count examples/large.parquet
 
 # 查看 schema
-parq examples/large.parquet --schema
+parq schema examples/large.parquet
 ```
-

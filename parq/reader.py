@@ -82,10 +82,10 @@ class ParquetReader:
         file_size = self.file_path.stat().st_size
         metadata_dict["file_size"] = file_size
 
-        # Add compression type (from first row group, first column)
-        if self.num_row_groups > 0:
-            compression = self.metadata.row_group(0).column(0).compression
-            metadata_dict["compression_types"] = compression
+        # Add compression information
+        compression = self._get_compression_summary()
+        if compression is not None:
+            metadata_dict["compression"] = compression
 
         # Add remaining metadata
         metadata_dict.update(
@@ -255,6 +255,8 @@ class ParquetReader:
         if file_count is not None:
             if file_count <= 0:
                 raise ValueError("file_count must be positive")
+            if file_count > total_rows:
+                raise ValueError("file_count cannot exceed total rows")
             num_files = file_count
             rows_per_file = (total_rows + num_files - 1) // num_files  # Ceiling division
         else:
@@ -282,10 +284,13 @@ class ParquetReader:
 
         # Create writers for each output file
         writers = []
+        created_output_paths = []
+
         try:
             for output_path in output_files:
                 # Create parent directories if needed
                 output_path.parent.mkdir(parents=True, exist_ok=True)
+                created_output_paths.append(output_path)
 
                 # Create writer with same schema and compression as source
                 writer = pq.ParquetWriter(
@@ -333,11 +338,25 @@ class ParquetReader:
                         current_file_idx += 1
                         current_file_rows = 0
 
-        finally:
-            # Always close writers
+        except Exception:
             for writer in writers:
-                if writer:
+                try:
                     writer.close()
+                except Exception:
+                    pass
+
+            for output_path in created_output_paths:
+                try:
+                    output_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+
+            raise
+
+        for writer in writers:
+            writer.close()
 
         return output_files
 
@@ -352,6 +371,27 @@ class ParquetReader:
             compression = self.metadata.row_group(0).column(0).compression
             return compression
         return "SNAPPY"  # Default compression
+
+    def _get_compression_summary(self) -> Optional[str]:
+        """Get compression summary from all row groups and columns."""
+        if self.num_row_groups == 0:
+            return None
+
+        compressions = []
+        for row_group_idx in range(self.num_row_groups):
+            row_group = self.metadata.row_group(row_group_idx)
+            for column_idx in range(row_group.num_columns):
+                compression = row_group.column(column_idx).compression
+                if compression not in compressions:
+                    compressions.append(compression)
+
+        if not compressions:
+            return None
+
+        if len(compressions) == 1:
+            return compressions[0]
+
+        return ", ".join(compressions)
 
     def _create_empty_table(self) -> pa.Table:
         """Create an empty table with the same schema as the source file."""

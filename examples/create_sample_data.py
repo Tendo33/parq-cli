@@ -2,6 +2,7 @@
 Generate sample Parquet files for testing parq-cli.
 """
 
+from datetime import date
 from pathlib import Path
 
 import pyarrow as pa
@@ -57,7 +58,10 @@ def create_types_sample():
         "float_col": pa.array([1.1, 2.2, 3.3], type=pa.float64()),
         "string_col": pa.array(["foo", "bar", "baz"], type=pa.string()),
         "bool_col": pa.array([True, False, True], type=pa.bool_()),
-        "date_col": pa.array(["2024-01-01", "2024-01-02", "2024-01-03"], type=pa.date32()),
+        "date_col": pa.array(
+            [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)],
+            type=pa.date32(),
+        ),
         "nullable_col": pa.array([1, None, 3], type=pa.int32()),
     }
 
@@ -76,7 +80,7 @@ if __name__ == "__main__":
 
     print("\n✅ All sample files created successfully!")
     print("\nTry these commands:")
-    print("  parq examples/simple.parquet")
-    print("  parq examples/simple.parquet --schema")
-    print("  parq examples/large.parquet --head 10")
-    print("  parq examples/types.parquet --count")
+    print("  parq meta examples/simple.parquet")
+    print("  parq schema examples/simple.parquet")
+    print("  parq head -n 10 examples/large.parquet")
+    print("  parq count examples/types.parquet")

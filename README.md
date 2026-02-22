@@ -114,7 +114,8 @@ parq split FILE -f N -n "output-%03d.parquet"
 parq split FILE -f 3 -n "output/part-%02d.parquet"
 ```
 
-Split a Parquet file into multiple smaller files. You can specify either the number of output files (`--file-count`) or the number of records per file (`--record-count`). The output file names are formatted according to the `--name-format` pattern (default: `result-%06d.parquet`).
+Split a Parquet file into multiple smaller files. You can specify either the number of output files (`--file-count`) or the number of records per file (`--record-count`). The output file names are formatted according to the `--name-format` pattern (default: `result-%06d.parquet`).  
+When using `--file-count`, `N` must be a positive integer and cannot exceed the total rows of the source file.
 
 ### Global Options
 
@@ -165,6 +166,9 @@ $ parq meta nested.parquet
 │ created_by: parquet-cpp-arrow version 21.0.0                          │
 ╰────────────────────────────────────────────────────────────────────────╯
 ```
+
+Notes:
+- `compression` may show one codec (for example `SNAPPY`) or multiple codecs joined by commas when mixed compression exists.
 
 ### Schema Display
 

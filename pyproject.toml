@@ -53,3 +53,8 @@ packages = ["parq"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+
+[tool.pytest.ini_options]
+markers = [
+    "performance: performance comparison tests for parquet datasets",
+]

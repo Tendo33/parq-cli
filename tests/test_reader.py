@@ -2,6 +2,8 @@
 Tests for ParquetReader.
 """
 
+from pathlib import Path
+
 import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -29,6 +31,7 @@ class TestParquetReader:
 
         assert metadata["num_rows"] == 5
         assert metadata["num_columns"] == 5
+        assert metadata["compression"] == reader.metadata.row_group(0).column(0).compression
         assert "file_path" in metadata
         assert "created_by" in metadata
 
@@ -217,6 +220,14 @@ class TestParquetReader:
         with pytest.raises(ValueError, match="must be positive"):
             reader.split_file(output_pattern=output_pattern, record_count=-1)
 
+    def test_split_rejects_file_count_larger_than_total_rows(self, sample_parquet_file, tmp_path):
+        """Test split by file count rejects creating guaranteed empty output files."""
+        reader = ParquetReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%03d.parquet")
+
+        with pytest.raises(ValueError, match="cannot exceed total rows"):
+            reader.split_file(output_pattern=output_pattern, file_count=reader.num_rows + 1)
+
     def test_split_invalid_pattern(self, sample_parquet_file, tmp_path):
         """Test split with invalid output pattern."""
         reader = ParquetReader(str(sample_parquet_file))
@@ -254,3 +265,30 @@ class TestParquetReader:
         for file_path in output_files:
             assert file_path.exists()
             assert file_path.parent == tmp_path / "output"
+
+    def test_split_cleans_up_outputs_on_write_error(self, sample_parquet_file, tmp_path, monkeypatch):
+        """Test split removes created outputs if writing fails partway through."""
+        reader = ParquetReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%03d.parquet")
+
+        class FailingWriter:
+            def __init__(self, where, schema, compression=None):
+                del schema, compression
+                self.path = Path(where)
+                self.path.touch()
+
+            def write_batch(self, batch):
+                del batch
+                if self.path.name.endswith("001.parquet"):
+                    raise OSError("simulated write failure")
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr("parq.reader.pq.ParquetWriter", FailingWriter)
+
+        with pytest.raises(OSError, match="simulated write failure"):
+            reader.split_file(output_pattern=output_pattern, file_count=2)
+
+        assert not (tmp_path / "split-000.parquet").exists()
+        assert not (tmp_path / "split-001.parquet").exists()
