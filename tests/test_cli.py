@@ -68,6 +68,28 @@ class TestCLI:
         assert result.exit_code == 0
         assert "last" in result.output.lower() and "2" in result.output.lower()
 
+    def test_cli_head_with_columns(self, sample_parquet_file):
+        """Test head command with --columns option."""
+        result = runner.invoke(app, ["head", "-c", "id,name", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        assert "id" in result.output
+        assert "name" in result.output
+        assert "salary" not in result.output
+
+    def test_cli_head_with_columns_invalid(self, sample_parquet_file):
+        """Test head command with invalid column name."""
+        result = runner.invoke(app, ["head", "-c", "id,nonexistent", str(sample_parquet_file)])
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_cli_tail_with_columns(self, sample_parquet_file):
+        """Test tail command with --columns option."""
+        result = runner.invoke(app, ["tail", "-c", "id,city", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        assert "id" in result.output
+        assert "city" in result.output
+        assert "salary" not in result.output
+
     def test_cli_count_command(self, sample_parquet_file):
         """Test count subcommand: parq count FILE."""
         result = runner.invoke(app, ["count", str(sample_parquet_file)])

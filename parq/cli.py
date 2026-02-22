@@ -110,6 +110,10 @@ def schema(
 def head(
     file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
     n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
+    columns: Annotated[
+        Optional[str],
+        typer.Option("--columns", "-c", help="Comma-separated list of columns to display"),
+    ] = None,
 ) -> None:
     """
     Display the first N rows of a Parquet file (default: 5).
@@ -124,7 +128,8 @@ def head(
     """
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
-        table = reader.read_head(n)
+        col_list = [c.strip() for c in columns.split(",")] if columns else None
+        table = reader.read_head(n, columns=col_list)
         formatter.print_table(table, f"First {n} Rows")
 
     _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
@@ -134,6 +139,10 @@ def head(
 def tail(
     file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
     n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
+    columns: Annotated[
+        Optional[str],
+        typer.Option("--columns", "-c", help="Comma-separated list of columns to display"),
+    ] = None,
 ) -> None:
     """
     Display the last N rows of a Parquet file (default: 5).
@@ -148,7 +157,8 @@ def tail(
     """
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file))
-        table = reader.read_tail(n)
+        col_list = [c.strip() for c in columns.split(",")] if columns else None
+        table = reader.read_tail(n, columns=col_list)
         formatter.print_table(table, f"Last {n} Rows")
 
     _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
