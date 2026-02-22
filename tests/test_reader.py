@@ -185,6 +185,34 @@ class TestParquetReader:
         result = reader.read_tail(3)
         assert result["id"].to_pylist() == [37, 38, 39]
 
+    def test_read_tail_with_columns(self, sample_parquet_file):
+        """Test read_tail returns only selected columns."""
+        reader = ParquetReader(str(sample_parquet_file))
+        table = reader.read_tail(2, columns=["id", "city"])
+        assert len(table) == 2
+        assert table.column_names == ["id", "city"]
+        assert table["id"].to_pylist() == [4, 5]
+
+    def test_read_tail_with_columns_invalid(self, sample_parquet_file):
+        """Test read_tail raises on invalid column names."""
+        reader = ParquetReader(str(sample_parquet_file))
+        with pytest.raises(ValueError, match="not found in schema"):
+            reader.read_tail(2, columns=["bad_col"])
+
+    def test_read_tail_with_columns_optimized_path(self, tmp_path):
+        """Test column pruning works with optimized row-group tail path."""
+        file_path = tmp_path / "multi_rg_tail.parquet"
+        table = pa.table({
+            "id": list(range(40)),
+            "value": [f"v{i}" for i in range(40)],
+            "extra": [float(i) for i in range(40)],
+        })
+        pq.write_table(table, file_path, row_group_size=5)
+        reader = ParquetReader(str(file_path))
+        result = reader.read_tail(3, columns=["id", "value"])
+        assert result.column_names == ["id", "value"]
+        assert result["id"].to_pylist() == [37, 38, 39]
+
     def test_read_columns(self, sample_parquet_file):
         """Test reading specific columns."""
         reader = ParquetReader(str(sample_parquet_file))
