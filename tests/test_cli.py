@@ -96,6 +96,43 @@ class TestCLI:
         assert result.exit_code == 0
         assert "5" in result.output
 
+    def test_cli_count_plain(self, sample_parquet_file):
+        """Test count with --output plain."""
+        result = runner.invoke(app, ["--output", "plain", "count", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        assert result.output.strip() == "5"
+
+    def test_cli_count_json(self, sample_parquet_file):
+        """Test count with --output json."""
+        import json
+        result = runner.invoke(app, ["--output", "json", "count", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["count"] == 5
+
+    def test_cli_meta_plain(self, sample_parquet_file):
+        """Test meta with --output plain."""
+        result = runner.invoke(app, ["--output", "plain", "meta", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        assert "num_rows\t5" in result.output
+
+    def test_cli_head_json(self, sample_parquet_file):
+        """Test head with --output json."""
+        import json
+        result = runner.invoke(app, ["-o", "json", "head", "-n", "2", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data["rows"]) == 2
+
+    def test_cli_head_plain_with_columns(self, sample_parquet_file):
+        """Test head --output plain combined with --columns."""
+        result = runner.invoke(
+            app, ["--output", "plain", "head", "-c", "id,name", str(sample_parquet_file)]
+        )
+        assert result.exit_code == 0
+        lines = result.output.strip().split("\n")
+        assert lines[0] == "id\tname"
+
     @pytest.mark.parametrize("command", ["meta", "schema", "head", "tail", "count"])
     def test_read_commands_file_not_found(self, command):
         """Test read commands handle non-existent file gracefully."""

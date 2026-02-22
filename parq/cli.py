@@ -14,9 +14,19 @@ app = typer.Typer(
     add_completion=False,
 )
 
+_output_format: str = "rich"
+
 
 def _get_formatter():
-    """Lazy load formatter to improve CLI startup time."""
+    """Lazy load formatter based on output format setting."""
+    if _output_format == "plain":
+        from parq.plain_output import PlainOutputFormatter
+
+        return PlainOutputFormatter()
+    elif _output_format == "json":
+        from parq.plain_output import JsonOutputFormatter
+
+        return JsonOutputFormatter()
     from parq.output import OutputFormatter
 
     return OutputFormatter()
@@ -54,8 +64,14 @@ def main(
     version: Annotated[
         bool, typer.Option("--version", "-v", help="Show version information")
     ] = False,
+    output: Annotated[
+        str, typer.Option("--output", "-o", help="Output format: rich, plain, json")
+    ] = "rich",
 ) -> None:
     """A powerful command-line tool for inspecting Apache Parquet files 🚀"""
+    global _output_format
+    _output_format = output
+
     if version:
         from parq import __version__
 
@@ -244,36 +260,44 @@ def split(
         # Create reader
         reader = _get_reader(str(file))
 
-        # Setup progress bar
-        from rich.progress import (
-            BarColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeRemainingColumn,
-        )
+        # Setup progress bar (skip for plain/json modes)
+        if _output_format == "rich":
+            from rich.progress import (
+                BarColumn,
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                TimeRemainingColumn,
+            )
 
-        from parq.output import console
+            from parq.output import console
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task(f"[cyan]Splitting {file.name}...", total=reader.num_rows)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    f"[cyan]Splitting {file.name}...", total=reader.num_rows
+                )
 
-            def update_progress(current: int, _total: int):
-                progress.update(task, completed=current)
+                def update_progress(current: int, _total: int):
+                    progress.update(task, completed=current)
 
-            # Perform split with progress callback
+                output_files = reader.split_file(
+                    output_pattern=name_format,
+                    file_count=file_count,
+                    record_count=record_count,
+                    progress_callback=update_progress,
+                )
+        else:
             output_files = reader.split_file(
                 output_pattern=name_format,
                 file_count=file_count,
                 record_count=record_count,
-                progress_callback=update_progress,
             )
 
         # Calculate elapsed time
