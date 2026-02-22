@@ -298,66 +298,57 @@ class ParquetReader:
             if output_path.exists():
                 raise FileExistsError(f"Output file already exists: {output_path}")
 
-        # Create writers for each output file
-        writers = []
-        created_output_paths = []
+        compression = self._get_compression_type()
+        created_output_paths: List[Path] = []
+        current_writer: Optional[pq.ParquetWriter] = None
+
+        def _open_writer(idx: int) -> pq.ParquetWriter:
+            path = output_files[idx]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            created_output_paths.append(path)
+            return pq.ParquetWriter(path, self.schema, compression=compression)
 
         try:
-            for output_path in output_files:
-                # Create parent directories if needed
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                created_output_paths.append(output_path)
-
-                # Create writer with same schema and compression as source
-                writer = pq.ParquetWriter(
-                    output_path,
-                    self.schema,
-                    compression=self._get_compression_type(),
-                )
-                writers.append(writer)
-
-            # Read and distribute data in batches
             current_file_idx = 0
             current_file_rows = 0
             rows_processed = 0
+            current_writer = _open_writer(0)
 
-            # Use batch reader for memory efficiency
-            batch_size = min(10000, rows_per_file)  # Read in chunks
+            batch_size = min(10000, rows_per_file)
             for batch in self._parquet_file.iter_batches(batch_size=batch_size):
                 batch_rows = len(batch)
                 batch_offset = 0
 
                 while batch_offset < batch_rows:
-                    # Calculate how many rows to write to current file
                     rows_remaining_in_file = rows_per_file - current_file_rows
                     rows_to_write = min(rows_remaining_in_file, batch_rows - batch_offset)
 
-                    # Extract slice from batch
                     if rows_to_write == batch_rows and batch_offset == 0:
-                        # Write entire batch
-                        writers[current_file_idx].write_batch(batch)
+                        current_writer.write_batch(batch)
                     else:
-                        # Write partial batch
                         slice_batch = batch.slice(batch_offset, rows_to_write)
-                        writers[current_file_idx].write_batch(slice_batch)
+                        current_writer.write_batch(slice_batch)
 
                     batch_offset += rows_to_write
                     current_file_rows += rows_to_write
                     rows_processed += rows_to_write
 
-                    # Report progress
                     if progress_callback:
                         progress_callback(rows_processed, total_rows)
 
-                    # Move to next file if current is full
                     if current_file_rows >= rows_per_file and current_file_idx < num_files - 1:
+                        current_writer.close()
                         current_file_idx += 1
                         current_file_rows = 0
+                        current_writer = _open_writer(current_file_idx)
+
+            current_writer.close()
+            current_writer = None
 
         except Exception:
-            for writer in writers:
+            if current_writer is not None:
                 try:
-                    writer.close()
+                    current_writer.close()
                 except Exception:
                     pass
 
@@ -370,9 +361,6 @@ class ParquetReader:
                     pass
 
             raise
-
-        for writer in writers:
-            writer.close()
 
         return output_files
 
@@ -389,25 +377,40 @@ class ParquetReader:
         return "SNAPPY"  # Default compression
 
     def _get_compression_summary(self) -> Optional[str]:
-        """Get compression summary from all row groups and columns."""
+        """Get compression summary from all row groups and columns.
+
+        Optimized to scan the first row group fully, then only continue
+        scanning subsequent row groups if heterogeneous compression is
+        detected. Homogeneous files (the common case) exit after one
+        row group, making this O(num_columns) instead of
+        O(num_row_groups * num_columns).
+        """
         if self.num_row_groups == 0:
             return None
 
-        compressions = []
-        for row_group_idx in range(self.num_row_groups):
-            row_group = self.metadata.row_group(row_group_idx)
-            for column_idx in range(row_group.num_columns):
-                compression = row_group.column(column_idx).compression
-                if compression not in compressions:
-                    compressions.append(compression)
+        compressions: set[str] = set()
+        first_rg = self.metadata.row_group(0)
+        for col_idx in range(first_rg.num_columns):
+            compressions.add(first_rg.column(col_idx).compression)
+
+        if len(compressions) <= 1 and self.num_row_groups > 1:
+            first_rg_types = compressions.copy()
+            for rg_idx in range(1, self.num_row_groups):
+                rg = self.metadata.row_group(rg_idx)
+                for col_idx in range(rg.num_columns):
+                    comp = rg.column(col_idx).compression
+                    if comp not in first_rg_types:
+                        compressions.add(comp)
+                if compressions != first_rg_types:
+                    break
 
         if not compressions:
             return None
 
         if len(compressions) == 1:
-            return compressions[0]
+            return compressions.pop()
 
-        return ", ".join(compressions)
+        return ", ".join(sorted(compressions))
 
     def _create_empty_table(self, columns: Optional[List[str]] = None) -> pa.Table:
         """Create an empty table with the same schema as the source file."""
