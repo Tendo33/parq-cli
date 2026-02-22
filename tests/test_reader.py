@@ -100,6 +100,39 @@ class TestParquetReader:
         with pytest.raises(ValueError, match="must be non-negative"):
             reader.read_head(-1)
 
+    def test_read_head_with_columns(self, sample_parquet_file):
+        """Test read_head returns only selected columns."""
+        reader = ParquetReader(str(sample_parquet_file))
+        table = reader.read_head(3, columns=["id", "name"])
+        assert len(table) == 3
+        assert table.column_names == ["id", "name"]
+
+    def test_read_head_with_columns_invalid(self, sample_parquet_file):
+        """Test read_head raises on invalid column names."""
+        reader = ParquetReader(str(sample_parquet_file))
+        with pytest.raises(ValueError, match="not found in schema"):
+            reader.read_head(3, columns=["id", "nonexistent"])
+
+    def test_read_head_with_columns_optimized_path(self, tmp_path):
+        """Test column pruning works with optimized row-group path."""
+        file_path = tmp_path / "multi_rg.parquet"
+        table = pa.table({
+            "id": list(range(40)),
+            "value": [f"v{i}" for i in range(40)],
+            "extra": [float(i) for i in range(40)],
+        })
+        pq.write_table(table, file_path, row_group_size=5)
+        reader = ParquetReader(str(file_path))
+        result = reader.read_head(2, columns=["id"])
+        assert result.column_names == ["id"]
+        assert result["id"].to_pylist() == [0, 1]
+
+    def test_read_head_with_columns_empty(self, sample_parquet_file):
+        """Test read_head with empty columns list raises ValueError."""
+        reader = ParquetReader(str(sample_parquet_file))
+        with pytest.raises(ValueError, match="cannot be empty"):
+            reader.read_head(3, columns=[])
+
     def test_read_head_optimized_path_with_multiple_row_groups(self, tmp_path):
         """Test read_head optimized path reads only needed row groups."""
         file_path = tmp_path / "multi_rg.parquet"

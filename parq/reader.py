@@ -117,7 +117,7 @@ class ParquetReader:
             )
         return schema_info
 
-    def read_head(self, n: int = 5) -> pa.Table:
+    def read_head(self, n: int = 5, columns: Optional[List[str]] = None) -> pa.Table:
         """
         Read first n rows.
 
@@ -126,25 +126,33 @@ class ParquetReader:
 
         Args:
             n: Number of rows to read (must be >= 0)
+            columns: Optional list of column names to read. If None, read all columns.
 
         Returns:
             PyArrow table with first n rows
 
         Raises:
-            ValueError: If n < 0
+            ValueError: If n < 0, or columns is empty, or columns contains invalid names
         """
         # Input validation
         if n < 0:
             raise ValueError(f"n must be non-negative, got {n}")
 
+        if columns is not None:
+            if len(columns) == 0:
+                raise ValueError("columns cannot be empty")
+            missing = [c for c in columns if c not in self.schema.names]
+            if missing:
+                raise ValueError(f"Columns not found in schema: {missing}")
+
         # Guard: zero rows requested - return empty table with correct schema
         if n == 0:
-            return self._create_empty_table()
+            return self._create_empty_table(columns=columns)
 
         # Fast path: small files or single row group
         # Avoids overhead of row group calculation
         if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
-            table = self._parquet_file.read()
+            table = self._parquet_file.read(columns=columns)
             return table.slice(0, min(n, self.num_rows))
 
         # Optimized path: only read necessary row groups
@@ -157,7 +165,7 @@ class ParquetReader:
             if rows_read >= n:
                 break
 
-        table = self._parquet_file.read_row_groups(row_groups)
+        table = self._parquet_file.read_row_groups(row_groups, columns=columns)
         return table.slice(0, n)
 
     def read_tail(self, n: int = 5) -> pa.Table:
@@ -393,7 +401,9 @@ class ParquetReader:
 
         return ", ".join(compressions)
 
-    def _create_empty_table(self) -> pa.Table:
+    def _create_empty_table(self, columns: Optional[List[str]] = None) -> pa.Table:
         """Create an empty table with the same schema as the source file."""
-        arrays = [pa.array([], type=field.type) for field in self.schema]
-        return pa.Table.from_arrays(arrays, names=self.schema.names)
+        fields = self.schema if columns is None else [self.schema.field(c) for c in columns]
+        arrays = [pa.array([], type=field.type) for field in fields]
+        names = [field.name for field in fields]
+        return pa.Table.from_arrays(arrays, names=names)
