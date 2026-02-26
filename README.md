@@ -3,17 +3,17 @@
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A powerful command-line tool for Apache Parquet files 🚀
+A powerful command-line tool for tabular files (`.parquet`, `.csv`, `.xlsx`) 🚀
 
 English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README_CN.md)
 
 ## ✨ Features
 
-- 📊 **Metadata Viewing**: Quickly view Parquet file metadata (row count, column count, file size, compression type, etc.)
+- 📊 **Metadata Viewing**: Quickly view file metadata (row count, column count, file size, etc.)
 - 📋 **Schema Display**: Beautifully display file column structure and data types
 - 👀 **Data Preview**: Support viewing the first N rows or last N rows of a file
 - 🔢 **Row Count**: Quickly get the total number of rows in a file
-- ✂️ **File Splitting**: Split large Parquet files into multiple smaller files
+- ✂️ **File Splitting**: Split large files into multiple smaller files
 - 🗜️ **Compression Info**: Display file compression type and file size
 - 🎨 **Beautiful Output**: Use Rich library for colorful, formatted terminal output
 - 📦 **Smart Display**: Automatically detect nested structures, showing logical and physical column counts
@@ -22,6 +22,9 @@ English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README_CN
 
 ```bash
 pip install parq-cli
+
+# Optional: enable .xlsx support
+pip install "parq-cli[xlsx]"
 ```
 
 ## 🚀 Quick Start
@@ -31,6 +34,8 @@ pip install parq-cli
 ```bash
 # View file metadata
 parq meta data.parquet
+parq meta data.csv
+parq meta data.xlsx
 
 # Display schema information
 parq schema data.parquet
@@ -65,7 +70,8 @@ parq split data.parquet --record-count 1000
 parq meta FILE
 ```
 
-Display Parquet file metadata (row count, column count, file size, compression type, etc.).
+Display file metadata (row count, column count, file size, etc.).
+Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
 
 ### View Schema
 
@@ -73,7 +79,8 @@ Display Parquet file metadata (row count, column count, file size, compression t
 parq schema FILE
 ```
 
-Display the column structure and data types of a Parquet file.
+Display the column structure and data types of a file.
+Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
 
 ### Preview Data
 
@@ -90,6 +97,7 @@ parq tail -n N FILE
 Notes:
 - `N` must be a non-negative integer.
 - If the input file does not exist, parq exits with code `1` and prints a friendly error message.
+- Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
 
 ### Statistics
 
@@ -114,7 +122,8 @@ parq split FILE -f N -n "output-%03d.parquet"
 parq split FILE -f 3 -n "output/part-%02d.parquet"
 ```
 
-Split a Parquet file into multiple smaller files. You can specify either the number of output files (`--file-count`) or the number of records per file (`--record-count`). The output file names are formatted according to the `--name-format` pattern (default: `result-%06d.parquet`).  
+Split a source file into multiple smaller files. You can specify either the number of output files (`--file-count`) or the number of records per file (`--record-count`). The output file names are formatted according to the `--name-format` pattern (default: `result-%06d.parquet`).  
+The output format is inferred from the file extension in `--name-format` (for example `.parquet`, `.csv`, `.xlsx`).
 When using `--file-count`, `N` must be a positive integer and cannot exceed the total rows of the source file.
 
 ### Global Options

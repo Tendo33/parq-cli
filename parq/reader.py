@@ -1,18 +1,184 @@
 """
-Parquet file reader module.
-Provides functionality to read and inspect Parquet files.
+Tabular file reader module.
+Provides functionality to read and inspect parquet/csv/xlsx files.
 """
 
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 import pyarrow as pa
+import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
 # Heuristic multiplier for determining when to use fast path vs optimized path
 # Files with <= n * FAST_PATH_ROWS_MULTIPLIER rows use full read + slice (simpler)
 # Larger files use row group optimization to reduce I/O
 FAST_PATH_ROWS_MULTIPLIER = 10
+SUPPORTED_INPUT_FORMATS = {".parquet", ".csv", ".xlsx"}
+
+
+def _validate_preview_params(n: int, schema: pa.Schema, columns: Optional[List[str]]) -> None:
+    """Validate preview parameters shared by multiple readers."""
+    if n < 0:
+        raise ValueError(f"n must be non-negative, got {n}")
+
+    if columns is not None:
+        if len(columns) == 0:
+            raise ValueError("columns cannot be empty")
+        missing = [c for c in columns if c not in schema.names]
+        if missing:
+            raise ValueError(f"Columns not found in schema: {missing}")
+
+
+def _create_empty_table(schema: pa.Schema, columns: Optional[List[str]] = None) -> pa.Table:
+    """Create an empty table with source schema or selected columns."""
+    fields = schema if columns is None else [schema.field(c) for c in columns]
+    arrays = [pa.array([], type=field.type) for field in fields]
+    names = [field.name for field in fields]
+    return pa.Table.from_arrays(arrays, names=names)
+
+
+def _table_schema_info(schema: pa.Schema) -> List[dict]:
+    """Convert Arrow schema to formatter-compatible schema info structure."""
+    return [
+        {
+            "name": field.name,
+            "type": str(field.type),
+            "nullable": field.nullable,
+        }
+        for field in schema
+    ]
+
+
+def _require_openpyxl() -> Any:
+    """Import openpyxl lazily and raise actionable error when unavailable."""
+    try:
+        import openpyxl
+    except ImportError as e:
+        raise ValueError(
+            "XLSX support requires 'openpyxl'. Install it with: pip install 'parq-cli[xlsx]'"
+        ) from e
+    return openpyxl
+
+
+def _normalize_excel_headers(header_row: List[Any]) -> List[str]:
+    """Normalize empty/duplicate xlsx header names for Arrow table construction."""
+    seen = set()
+    normalized = []
+    for idx, value in enumerate(header_row, start=1):
+        base_name = str(value).strip() if value is not None and str(value).strip() else f"column_{idx}"
+        name = base_name
+        suffix = 2
+        while name in seen:
+            name = f"{base_name}_{suffix}"
+            suffix += 1
+        seen.add(name)
+        normalized.append(name)
+    return normalized
+
+
+def _to_arrow_array(values: List[Any]) -> pa.Array:
+    """Build Arrow array with graceful fallback for mixed-type spreadsheet columns."""
+    try:
+        return pa.array(values)
+    except (pa.ArrowTypeError, pa.ArrowInvalid):
+        normalized = [None if v is None else str(v) for v in values]
+        return pa.array(normalized, type=pa.string())
+
+
+def _read_xlsx_table(file_path: Path) -> pa.Table:
+    """Read active sheet from xlsx into Arrow table."""
+    openpyxl = _require_openpyxl()
+    workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        rows = worksheet.iter_rows(values_only=True)
+        header = next(rows, None)
+        if header is None:
+            return pa.table({})
+
+        headers = _normalize_excel_headers(list(header))
+        columns = {name: [] for name in headers}
+
+        for row in rows:
+            row_values = list(row) if row is not None else []
+            for idx, name in enumerate(headers):
+                columns[name].append(row_values[idx] if idx < len(row_values) else None)
+
+        arrays = [_to_arrow_array(columns[name]) for name in headers]
+        return pa.Table.from_arrays(arrays, names=headers)
+    finally:
+        workbook.close()
+
+
+def _write_xlsx_table(table: pa.Table, output_path: Path) -> None:
+    """Write Arrow table to xlsx using openpyxl."""
+    openpyxl = _require_openpyxl()
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.append(table.column_names)
+
+    for batch in table.to_batches():
+        batch_dict = batch.to_pydict()
+        for row_idx in range(len(batch)):
+            row = []
+            for col_name in table.column_names:
+                value = batch_dict[col_name][row_idx]
+                if isinstance(value, (dict, list, set, tuple)):
+                    row.append(str(value))
+                else:
+                    row.append(value)
+            worksheet.append(row)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
+
+
+def _resolve_split_shape(
+    total_rows: int,
+    file_count: Optional[int] = None,
+    record_count: Optional[int] = None,
+) -> List[int]:
+    """Resolve split chunk sizes with existing validation semantics."""
+    if file_count is None and record_count is None:
+        raise ValueError("Either file_count or record_count must be specified")
+    if file_count is not None and record_count is not None:
+        raise ValueError("file_count and record_count are mutually exclusive")
+    if total_rows == 0:
+        raise ValueError("Cannot split empty file")
+
+    if file_count is not None:
+        if file_count <= 0:
+            raise ValueError("file_count must be positive")
+        if file_count > total_rows:
+            raise ValueError("file_count cannot exceed total rows")
+        base_rows = total_rows // file_count
+        remainder = total_rows % file_count
+        return [base_rows + (1 if i < remainder else 0) for i in range(file_count)]
+
+    assert record_count is not None
+    if record_count <= 0:
+        raise ValueError("record_count must be positive")
+    full_chunks, remainder = divmod(total_rows, record_count)
+    chunk_sizes = [record_count] * full_chunks
+    if remainder:
+        chunk_sizes.append(remainder)
+    return chunk_sizes
+
+
+def _write_table_by_suffix(table: pa.Table, output_path: Path) -> None:
+    """Write Arrow table chunk using extension-specific writer."""
+    suffix = output_path.suffix.lower()
+    if suffix == ".parquet":
+        pq.write_table(table, output_path)
+        return
+    if suffix == ".csv":
+        pacsv.write_csv(table, output_path)
+        return
+    if suffix == ".xlsx":
+        _write_xlsx_table(table, output_path)
+        return
+    raise ValueError(f"Unsupported output file format: {suffix or '<none>'}")
 
 
 class ParquetReader:
@@ -418,3 +584,187 @@ class ParquetReader:
         arrays = [pa.array([], type=field.type) for field in fields]
         names = [field.name for field in fields]
         return pa.Table.from_arrays(arrays, names=names)
+
+
+class MultiFormatReader:
+    """Reader that supports parquet/csv/xlsx with a unified CLI-facing interface."""
+
+    def __init__(self, file_path: str):
+        self.file_path = Path(file_path)
+        if not self.file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        suffix = self.file_path.suffix.lower()
+        if suffix not in SUPPORTED_INPUT_FORMATS:
+            supported = ", ".join(sorted(SUPPORTED_INPUT_FORMATS))
+            raise ValueError(
+                f"Unsupported file format: {suffix or '<none>'}. Supported formats: {supported}"
+            )
+
+        self.input_format = suffix.lstrip(".")
+        self._parquet_reader: Optional[ParquetReader] = None
+        self._table: Optional[pa.Table] = None
+
+        if suffix == ".parquet":
+            self._parquet_reader = ParquetReader(file_path)
+        elif suffix == ".csv":
+            self._table = pacsv.read_csv(self.file_path)
+        else:
+            self._table = _read_xlsx_table(self.file_path)
+
+    @property
+    def schema(self) -> pa.Schema:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.schema
+        assert self._table is not None
+        return self._table.schema
+
+    @property
+    def num_rows(self) -> int:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.num_rows
+        assert self._table is not None
+        return len(self._table)
+
+    @property
+    def num_columns(self) -> int:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.num_columns
+        assert self._table is not None
+        return self._table.num_columns
+
+    @property
+    def num_physical_columns(self) -> int:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.num_physical_columns
+        return self.num_columns
+
+    @property
+    def num_row_groups(self) -> int:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.num_row_groups
+        return 1
+
+    def get_metadata_dict(self) -> dict:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.get_metadata_dict()
+
+        metadata_dict = {
+            "file_path": str(self.file_path),
+            "input_format": self.input_format,
+            "num_rows": self.num_rows,
+            "num_columns": self.num_columns,
+            "file_size": self.file_path.stat().st_size,
+            "num_row_groups": self.num_row_groups,
+        }
+        return metadata_dict
+
+    def get_schema_info(self) -> List[dict]:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.get_schema_info()
+        return _table_schema_info(self.schema)
+
+    def read_head(self, n: int = 5, columns: Optional[List[str]] = None) -> pa.Table:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.read_head(n=n, columns=columns)
+
+        _validate_preview_params(n, self.schema, columns)
+        if n == 0:
+            return _create_empty_table(self.schema, columns=columns)
+
+        table = self.read_columns(columns=columns)
+        return table.slice(0, min(n, self.num_rows))
+
+    def read_tail(self, n: int = 5, columns: Optional[List[str]] = None) -> pa.Table:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.read_tail(n=n, columns=columns)
+
+        _validate_preview_params(n, self.schema, columns)
+        if n == 0:
+            return _create_empty_table(self.schema, columns=columns)
+
+        table = self.read_columns(columns=columns)
+        start = max(0, self.num_rows - n)
+        return table.slice(start, n)
+
+    def read_columns(self, columns: Optional[List[str]] = None) -> pa.Table:
+        if self._parquet_reader is not None:
+            return self._parquet_reader.read_columns(columns=columns)
+
+        assert self._table is not None
+        if columns is None:
+            return self._table
+
+        missing = [c for c in columns if c not in self.schema.names]
+        if missing:
+            raise ValueError(f"Columns not found in schema: {missing}")
+        return self._table.select(columns)
+
+    def split_file(
+        self,
+        output_pattern: str,
+        file_count: Optional[int] = None,
+        record_count: Optional[int] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> List[Path]:
+        try:
+            output_pattern % 0
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid output pattern format: {e}") from e
+
+        sample_output = Path(output_pattern % 0)
+        output_suffix = sample_output.suffix.lower()
+
+        if self._parquet_reader is not None and output_suffix == ".parquet":
+            return self._parquet_reader.split_file(
+                output_pattern=output_pattern,
+                file_count=file_count,
+                record_count=record_count,
+                progress_callback=progress_callback,
+            )
+
+        total_rows = self.num_rows
+        chunk_sizes = _resolve_split_shape(
+            total_rows, file_count=file_count, record_count=record_count
+        )
+        num_files = len(chunk_sizes)
+
+        output_files = []
+        for i in range(num_files):
+            output_path = Path(output_pattern % i)
+            output_files.append(output_path)
+            if output_path.exists():
+                raise FileExistsError(f"Output file already exists: {output_path}")
+
+        source_table = (
+            self._table
+            if self._table is not None
+            else self._parquet_reader.read_columns() if self._parquet_reader is not None else None
+        )
+        assert source_table is not None
+
+        created_output_paths: List[Path] = []
+        rows_processed = 0
+        row_offset = 0
+        try:
+            for output_path, chunk_size in zip(output_files, chunk_sizes):
+                chunk = source_table.slice(row_offset, chunk_size)
+                row_offset += chunk_size
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                _write_table_by_suffix(chunk, output_path)
+                created_output_paths.append(output_path)
+
+                rows_processed += len(chunk)
+                if progress_callback:
+                    progress_callback(rows_processed, total_rows)
+        except Exception:
+            for created_path in created_output_paths:
+                try:
+                    created_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            raise
+
+        return output_files

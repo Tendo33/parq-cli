@@ -3,6 +3,7 @@ Tests for CLI commands.
 """
 
 import pytest
+import pyarrow.csv as pacsv
 from typer.testing import CliRunner
 
 from parq import __version__
@@ -132,6 +133,44 @@ class TestCLI:
         assert result.exit_code == 0
         lines = result.output.strip().split("\n")
         assert lines[0] == "id\tname"
+
+    @pytest.mark.parametrize("fixture_name", ["sample_csv_file", "sample_xlsx_file"])
+    def test_read_commands_support_non_parquet_inputs(self, fixture_name, request):
+        """Test read commands support csv/xlsx inputs directly."""
+        input_file = request.getfixturevalue(fixture_name)
+        commands = [
+            ["meta", str(input_file)],
+            ["schema", str(input_file)],
+            ["head", "-n", "2", str(input_file)],
+            ["tail", "-n", "2", str(input_file)],
+            ["count", str(input_file)],
+        ]
+
+        for cmd in commands:
+            result = runner.invoke(app, cmd)
+            assert result.exit_code == 0
+
+    def test_split_supports_csv_input(self, sample_csv_file, tmp_path):
+        """Test split command accepts csv input and writes parquet outputs."""
+        output_pattern = str(tmp_path / "csv-split-%02d.parquet")
+        result = runner.invoke(
+            app,
+            ["split", str(sample_csv_file), "--record-count", "2", "--name-format", output_pattern],
+        )
+        assert result.exit_code == 0
+        assert (tmp_path / "csv-split-00.parquet").exists()
+        assert (tmp_path / "csv-split-01.parquet").exists()
+
+    def test_split_parquet_to_csv_output(self, sample_parquet_file, tmp_path):
+        """Test split command writes CSV content when output suffix is .csv."""
+        output_pattern = str(tmp_path / "parquet-split-%02d.csv")
+        result = runner.invoke(
+            app,
+            ["split", str(sample_parquet_file), "--record-count", "2", "--name-format", output_pattern],
+        )
+        assert result.exit_code == 0
+        row_counts = [pacsv.read_csv(tmp_path / f"parquet-split-{i:02d}.csv").num_rows for i in range(3)]
+        assert row_counts == [2, 2, 1]
 
     @pytest.mark.parametrize("command", ["meta", "schema", "head", "tail", "count"])
     def test_read_commands_file_not_found(self, command):
