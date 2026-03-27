@@ -318,7 +318,7 @@ def split(
         formatter.print_error(str(e))
         raise typer.Exit(code=1)
     except Exception as e:
-        formatter.print_error(f"Failed to split Parquet file: {e}")
+        formatter.print_error(f"Failed to split file: {e}")
         raise typer.Exit(code=1)
 
 

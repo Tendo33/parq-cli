@@ -423,29 +423,9 @@ class ParquetReader:
             IOError: If file write fails
         """
 
-        # Validate parameters
-        if file_count is None and record_count is None:
-            raise ValueError("Either file_count or record_count must be specified")
-        if file_count is not None and record_count is not None:
-            raise ValueError("file_count and record_count are mutually exclusive")
-
         total_rows = self.num_rows
-        if total_rows == 0:
-            raise ValueError("Cannot split empty file")
-
-        # Calculate number of files and rows per file
-        if file_count is not None:
-            if file_count <= 0:
-                raise ValueError("file_count must be positive")
-            if file_count > total_rows:
-                raise ValueError("file_count cannot exceed total rows")
-            num_files = file_count
-            rows_per_file = (total_rows + num_files - 1) // num_files  # Ceiling division
-        else:
-            if record_count <= 0:
-                raise ValueError("record_count must be positive")
-            rows_per_file = record_count
-            num_files = (total_rows + rows_per_file - 1) // rows_per_file
+        chunk_sizes = _resolve_split_shape(total_rows, file_count=file_count, record_count=record_count)
+        num_files = len(chunk_sizes)
 
         # Validate output pattern
         try:
@@ -477,16 +457,17 @@ class ParquetReader:
         try:
             current_file_idx = 0
             current_file_rows = 0
+            target_rows_for_current_file = chunk_sizes[current_file_idx]
             rows_processed = 0
             current_writer = _open_writer(0)
 
-            batch_size = min(10000, rows_per_file)
+            batch_size = min(10000, max(chunk_sizes))
             for batch in self._parquet_file.iter_batches(batch_size=batch_size):
                 batch_rows = len(batch)
                 batch_offset = 0
 
                 while batch_offset < batch_rows:
-                    rows_remaining_in_file = rows_per_file - current_file_rows
+                    rows_remaining_in_file = target_rows_for_current_file - current_file_rows
                     rows_to_write = min(rows_remaining_in_file, batch_rows - batch_offset)
 
                     if rows_to_write == batch_rows and batch_offset == 0:
@@ -502,10 +483,14 @@ class ParquetReader:
                     if progress_callback:
                         progress_callback(rows_processed, total_rows)
 
-                    if current_file_rows >= rows_per_file and current_file_idx < num_files - 1:
+                    if (
+                        current_file_rows >= target_rows_for_current_file
+                        and current_file_idx < num_files - 1
+                    ):
                         current_writer.close()
                         current_file_idx += 1
                         current_file_rows = 0
+                        target_rows_for_current_file = chunk_sizes[current_file_idx]
                         current_writer = _open_writer(current_file_idx)
 
             current_writer.close()
@@ -751,8 +736,8 @@ class MultiFormatReader:
                 chunk = source_table.slice(row_offset, chunk_size)
                 row_offset += chunk_size
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                _write_table_by_suffix(chunk, output_path)
                 created_output_paths.append(output_path)
+                _write_table_by_suffix(chunk, output_path)
 
                 rows_processed += len(chunk)
                 if progress_callback:

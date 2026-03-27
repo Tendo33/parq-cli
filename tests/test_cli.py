@@ -279,3 +279,20 @@ class TestCLI:
             app, ["split", str(sample_parquet_file), "-f", "2", "-n", output_pattern]
         )
         assert result.exit_code == 0
+
+    def test_split_unexpected_error_message_is_format_agnostic(self, sample_csv_file, monkeypatch):
+        """Test unexpected split errors use generic file wording for csv/xlsx support."""
+
+        class BoomReader:
+            num_rows = 1
+
+            @staticmethod
+            def split_file(**kwargs):
+                del kwargs
+                raise RuntimeError("simulated split boom")
+
+        monkeypatch.setattr("parq.cli._get_reader", lambda _path: BoomReader())
+
+        result = runner.invoke(app, ["split", str(sample_csv_file), "--record-count", "1"])
+        assert result.exit_code == 1
+        assert "Failed to split file" in result.output

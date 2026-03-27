@@ -406,3 +406,35 @@ class TestMultiFormatReader:
         assert len(output_files) == 4
         row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
         assert row_counts == [2, 1, 1, 1]
+
+    def test_split_parquet_with_file_count_creates_all_outputs(self, sample_parquet_file, tmp_path):
+        """Test parquet input honors exact file_count without returning missing paths."""
+        reader = MultiFormatReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%02d.parquet")
+        output_files = reader.split_file(output_pattern=output_pattern, file_count=4)
+
+        assert len(output_files) == 4
+        assert all(p.exists() for p in output_files)
+        row_counts = [ParquetReader(str(p)).num_rows for p in output_files]
+        assert row_counts == [2, 1, 1, 1]
+
+    def test_split_non_parquet_cleans_created_file_on_write_error(
+        self, sample_csv_file, tmp_path, monkeypatch
+    ):
+        """Test non-parquet split cleanup also removes partially-created failed output file."""
+        import parq.reader as reader_mod
+
+        def failing_write(table, output_path):
+            del table
+            Path(output_path).touch()
+            raise OSError("simulated non-parquet write failure")
+
+        monkeypatch.setattr(reader_mod, "_write_table_by_suffix", failing_write)
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        output_pattern = str(tmp_path / "split-%02d.csv")
+
+        with pytest.raises(OSError, match="simulated non-parquet write failure"):
+            reader.split_file(output_pattern=output_pattern, record_count=2)
+
+        assert not (tmp_path / "split-00.csv").exists()
