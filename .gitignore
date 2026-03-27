@@ -208,3 +208,5 @@ __marimo__/
 
 project_document/
 .history/
+.worktrees/
+worktrees/

@@ -36,6 +36,9 @@ Documentation = "https://github.com/Tendo33/parq-cli#readme"
 parq = "parq.cli:app"
 
 [project.optional-dependencies]
+xlsx = [
+    "openpyxl>=3.1.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",

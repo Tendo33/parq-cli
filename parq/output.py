@@ -16,7 +16,7 @@ console = Console()
 
 
 class OutputFormatter:
-    """Formatter for displaying Parquet data and metadata."""
+    """Formatter for displaying tabular data and metadata."""
 
     @staticmethod
     def _format_file_size(size_bytes: int) -> str:
@@ -68,7 +68,7 @@ class OutputFormatter:
 
         panel = Panel(
             content,
-            title="[bold green]📊 Parquet File Metadata[/bold green]",
+            title="[bold green]📊 File Metadata[/bold green]",
             border_style="green",
             box=box.ROUNDED,
         )

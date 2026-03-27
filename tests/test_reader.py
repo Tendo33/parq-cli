@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 import pyarrow as pa
+import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
-from parq.reader import ParquetReader
+from parq.reader import MultiFormatReader, ParquetReader
 
 
 class TestParquetReader:
@@ -353,3 +354,87 @@ class TestParquetReader:
 
         assert not (tmp_path / "split-000.parquet").exists()
         assert not (tmp_path / "split-001.parquet").exists()
+
+
+class TestMultiFormatReader:
+    """Test MultiFormatReader behavior for non-parquet inputs."""
+
+    def test_reader_initialization_csv(self, sample_csv_file):
+        reader = MultiFormatReader(str(sample_csv_file))
+        assert reader.file_path == sample_csv_file
+        assert reader.input_format == "csv"
+        assert reader.num_rows == 5
+        assert reader.num_columns == 5
+
+    def test_reader_initialization_xlsx(self, sample_xlsx_file):
+        reader = MultiFormatReader(str(sample_xlsx_file))
+        assert reader.input_format == "xlsx"
+        assert reader.num_rows == 5
+
+    def test_unsupported_extension(self, tmp_path):
+        unsupported = tmp_path / "data.json"
+        unsupported.write_text('{"a": 1}', encoding="utf-8")
+        with pytest.raises(ValueError, match="Unsupported file format"):
+            MultiFormatReader(str(unsupported))
+
+    def test_read_head_with_columns_csv(self, sample_csv_file):
+        reader = MultiFormatReader(str(sample_csv_file))
+        table = reader.read_head(2, columns=["id", "name"])
+        assert len(table) == 2
+        assert table.column_names == ["id", "name"]
+
+    def test_split_csv_to_parquet(self, sample_csv_file, tmp_path):
+        reader = MultiFormatReader(str(sample_csv_file))
+        output_pattern = str(tmp_path / "split-%02d.parquet")
+        output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
+        assert len(output_files) == 3
+        row_counts = [ParquetReader(str(p)).num_rows for p in output_files]
+        assert row_counts == [2, 2, 1]
+
+    def test_split_parquet_to_csv_writes_csv_content(self, sample_parquet_file, tmp_path):
+        reader = MultiFormatReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%02d.csv")
+        output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
+        assert len(output_files) == 3
+        row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
+        assert row_counts == [2, 2, 1]
+
+    def test_split_csv_with_file_count_has_no_empty_output(self, sample_csv_file, tmp_path):
+        reader = MultiFormatReader(str(sample_csv_file))
+        output_pattern = str(tmp_path / "split-%02d.csv")
+        output_files = reader.split_file(output_pattern=output_pattern, file_count=4)
+        assert len(output_files) == 4
+        row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
+        assert row_counts == [2, 1, 1, 1]
+
+    def test_split_parquet_with_file_count_creates_all_outputs(self, sample_parquet_file, tmp_path):
+        """Test parquet input honors exact file_count without returning missing paths."""
+        reader = MultiFormatReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%02d.parquet")
+        output_files = reader.split_file(output_pattern=output_pattern, file_count=4)
+
+        assert len(output_files) == 4
+        assert all(p.exists() for p in output_files)
+        row_counts = [ParquetReader(str(p)).num_rows for p in output_files]
+        assert row_counts == [2, 1, 1, 1]
+
+    def test_split_non_parquet_cleans_created_file_on_write_error(
+        self, sample_csv_file, tmp_path, monkeypatch
+    ):
+        """Test non-parquet split cleanup also removes partially-created failed output file."""
+        import parq.reader as reader_mod
+
+        def failing_write(table, output_path):
+            del table
+            Path(output_path).touch()
+            raise OSError("simulated non-parquet write failure")
+
+        monkeypatch.setattr(reader_mod, "_write_table_by_suffix", failing_write)
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        output_pattern = str(tmp_path / "split-%02d.csv")
+
+        with pytest.raises(OSError, match="simulated non-parquet write failure"):
+            reader.split_file(output_pattern=output_pattern, record_count=2)
+
+        assert not (tmp_path / "split-00.csv").exists()

@@ -34,9 +34,9 @@ def _get_formatter():
 
 def _get_reader(file_path: str):
     """Lazy load reader to improve CLI startup time."""
-    from parq.reader import ParquetReader
+    from parq.reader import MultiFormatReader
 
-    return ParquetReader(file_path)
+    return MultiFormatReader(file_path)
 
 
 def _run_with_error_handling(
@@ -86,7 +86,7 @@ def main(
 
 @app.command()
 def meta(
-    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
 ) -> None:
     """
     Display metadata information of a Parquet file.
@@ -100,12 +100,12 @@ def meta(
         metadata = reader.get_metadata_dict()
         formatter.print_metadata(metadata)
 
-    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read file")
 
 
 @app.command()
 def schema(
-    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
 ) -> None:
     """
     Display the schema of a Parquet file.
@@ -119,12 +119,12 @@ def schema(
         schema_info = reader.get_schema_info()
         formatter.print_schema(schema_info)
 
-    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read file")
 
 
 @app.command()
 def head(
-    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
     n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
     columns: Annotated[
         Optional[str],
@@ -148,12 +148,12 @@ def head(
         table = reader.read_head(n, columns=col_list)
         formatter.print_table(table, f"First {n} Rows")
 
-    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read file")
 
 
 @app.command()
 def tail(
-    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
     n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
     columns: Annotated[
         Optional[str],
@@ -177,12 +177,12 @@ def tail(
         table = reader.read_tail(n, columns=col_list)
         formatter.print_table(table, f"Last {n} Rows")
 
-    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read file")
 
 
 @app.command()
 def count(
-    file: Annotated[Path, typer.Argument(help="Path to Parquet file")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
 ) -> None:
     """
     Display the total row count of a Parquet file.
@@ -195,12 +195,12 @@ def count(
         reader = _get_reader(str(file))
         formatter.print_count(reader.num_rows)
 
-    _run_with_error_handling(operation, generic_error_prefix="Failed to read Parquet file")
+    _run_with_error_handling(operation, generic_error_prefix="Failed to read file")
 
 
 @app.command()
 def split(
-    file: Annotated[Path, typer.Argument(help="Path to source Parquet file")],
+    file: Annotated[Path, typer.Argument(help="Path to source file (.parquet, .csv, .xlsx)")],
     file_count: Annotated[
         Optional[int],
         typer.Option("--file-count", "-f", help="Number of output files"),
@@ -215,7 +215,7 @@ def split(
     ] = "result-%06d.parquet",
 ) -> None:
     """
-    Split a Parquet file into multiple files.
+    Split a source file into multiple files.
 
     The output file count is determined by either --file-count or --record-count parameter.
     File names are formatted according to --name-format (default: result-%06d.parquet).
@@ -318,7 +318,7 @@ def split(
         formatter.print_error(str(e))
         raise typer.Exit(code=1)
     except Exception as e:
-        formatter.print_error(f"Failed to split Parquet file: {e}")
+        formatter.print_error(f"Failed to split file: {e}")
         raise typer.Exit(code=1)
 
 
