@@ -59,7 +59,7 @@ def update_pyproject(pyproject_path: Path, new_version: str) -> None:
         flags=re.MULTILINE,
     )
     pyproject_path.write_text(new_content, encoding="utf-8")
-    print(f"✅ 已更新 pyproject.toml: version = '{new_version}'")
+    print(f"[OK] 已更新 pyproject.toml: version = '{new_version}'")
 
 
 def check_git_status() -> bool:
@@ -75,24 +75,24 @@ def create_git_commit_and_tag(version: str, auto_push: bool = False) -> None:
 
     # 创建 commit
     subprocess.run(["git", "commit", "-m", f"chore: bump version to {version}"], check=True)
-    print(f"✅ 已创建 commit: 'chore: bump version to {version}'")
+    print(f"[OK] 已创建 commit: 'chore: bump version to {version}'")
 
     # 创建 tag
     tag_name = f"v{version}"
     subprocess.run(["git", "tag", "-a", tag_name, "-m", f"Release {version}"], check=True)
-    print(f"✅ 已创建 tag: {tag_name}")
+    print(f"[OK] 已创建 tag: {tag_name}")
 
     if auto_push:
         subprocess.run(["git", "push", "origin", "main"], check=True)
         subprocess.run(["git", "push", "origin", tag_name], check=True)
-        print("✅ 已推送到远程仓库")
+        print("[OK] 已推送到远程仓库")
 
 
 def main():
     """主函数"""
     # 检查参数
     if len(sys.argv) < 2:
-        print("❌ 用法: python scripts/bump_version.py [major|minor|patch|--version VERSION]")
+        print("[ERROR] 用法: python scripts/bump_version.py [major|minor|patch|--version VERSION]")
         print("\n示例:")
         print("  python scripts/bump_version.py patch      # 0.1.0 -> 0.1.1")
         print("  python scripts/bump_version.py minor      # 0.1.0 -> 0.2.0")
@@ -105,32 +105,32 @@ def main():
     pyproject_path = root_dir / "pyproject.toml"
 
     if not pyproject_path.exists():
-        print(f"❌ 错误: 找不到 pyproject.toml 文件: {pyproject_path}")
+        print(f"[ERROR] 找不到 pyproject.toml 文件: {pyproject_path}")
         sys.exit(1)
 
     if not check_git_status():
-        print("❌ 错误: Git 工作区不干净，请先提交或暂存当前改动")
-        print("💡 提示: 运行 `git status --short` 查看未提交文件")
+        print("[ERROR] Git 工作区不干净，请先提交或暂存当前改动")
+        print("[HINT] 运行 `git status --short` 查看未提交文件")
         sys.exit(1)
 
     # 获取当前版本
     current_version = get_current_version(pyproject_path)
-    print(f"📦 当前版本: {current_version}")
+    print(f"[INFO] 当前版本: {current_version}")
 
     # 确定新版本
     arg = sys.argv[1]
     if arg == "--version":
         if len(sys.argv) < 3:
-            print("❌ 错误: --version 需要指定版本号")
+            print("[ERROR] --version 需要指定版本号")
             sys.exit(1)
         new_version = sys.argv[2]
     elif arg in ["major", "minor", "patch"]:
         new_version = bump_version(current_version, arg)
     else:
-        print(f"❌ 错误: 无效的参数 '{arg}'")
+        print(f"[ERROR] 无效的参数 '{arg}'")
         sys.exit(1)
 
-    print(f"🚀 新版本: {new_version}")
+    print(f"[INFO] 新版本: {new_version}")
 
     # 检查是否需要推送
     auto_push = "--push" in sys.argv
@@ -139,14 +139,14 @@ def main():
     if "--yes" not in sys.argv and "-y" not in sys.argv:
         response = input(f"\n是否继续更新版本到 {new_version}? (y/N): ")
         if response.lower() not in ["y", "yes"]:
-            print("❌ 已取消")
+            print("[INFO] 已取消")
             sys.exit(0)
 
     # 更新版本
     update_pyproject(pyproject_path, new_version)
 
     # Git 操作
-    print("\n🔍 检查 git 状态...")
+    print("\n[CHECK] 检查 git 状态...")
     try:
         create_git_commit_and_tag(new_version, auto_push)
 
@@ -155,8 +155,8 @@ def main():
             print("   git push origin main")
             print(f"   git push origin v{new_version}")
     except subprocess.CalledProcessError as e:
-        print(f"\n❌ Git 操作失败: {e}")
-        print("💡 请手动执行:")
+        print(f"\n[ERROR] Git 操作失败: {e}")
+        print("[HINT] 请手动执行:")
         print("   git add pyproject.toml")
         print(f"   git commit -m 'chore: bump version to {new_version}'")
         print(f"   git tag -a v{new_version} -m 'Release {new_version}'")
@@ -164,7 +164,7 @@ def main():
         print(f"   git push origin v{new_version}")
         sys.exit(1)
 
-    print("\n✨ 版本更新完成! GitHub Actions 将自动发布到 PyPI")
+    print("\n[OK] 版本更新完成! GitHub Actions 将自动发布到 PyPI")
 
 
 if __name__ == "__main__":

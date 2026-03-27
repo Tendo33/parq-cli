@@ -69,9 +69,9 @@ def check_version_conflict(local_version: str, pypi_versions: list) -> bool:
             key=lambda v: Version(v) if _is_valid_version(v) else Version("0"),
             reverse=True,
         )
-        print(f"❌ 错误: 版本 {local_version} 已在 PyPI 上存在!")
-        print(f"\n📋 PyPI 已有版本: {', '.join(sorted_versions[:10])}")
-        print("\n💡 解决方案:")
+        print(f"[ERROR] 版本 {local_version} 已在 PyPI 上存在!")
+        print(f"\n[INFO] PyPI 已有版本: {', '.join(sorted_versions[:10])}")
+        print("\n[HINT] 解决方案:")
         print("   1. 使用脚本升级版本:")
         print(f"      python scripts/bump_version.py patch   # {local_version} -> 下一个补丁版本")
         print(f"      python scripts/bump_version.py minor   # {local_version} -> 下一个次版本")
@@ -96,40 +96,40 @@ def main():
     pyproject_path = root_dir / "pyproject.toml"
 
     if not pyproject_path.exists():
-        print("❌ 错误: 找不到 pyproject.toml")
+        print("[ERROR] 找不到 pyproject.toml")
         sys.exit(1)
 
     # 读取包名和版本
     content = pyproject_path.read_text(encoding="utf-8")
     name_match = re.search(r'^name\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
     if not name_match:
-        print("❌ 错误: 无法在 pyproject.toml 中找到包名")
+        print("[ERROR] 无法在 pyproject.toml 中找到包名")
         sys.exit(1)
 
     package_name = name_match.group(1)
     local_version = get_local_version(pyproject_path)
 
-    print(f"📦 包名: {package_name}")
-    print(f"📦 本地版本: {local_version}")
-    print("🔍 检查 PyPI 版本...")
+    print(f"[INFO] 包名: {package_name}")
+    print(f"[INFO] 本地版本: {local_version}")
+    print("[CHECK] 检查 PyPI 版本...")
 
     # 获取 PyPI 版本
     try:
         pypi_versions = get_pypi_versions(package_name)
     except RuntimeError as e:
-        print(f"❌ 错误: {e}")
+        print(f"[ERROR] {e}")
         sys.exit(1)
 
     if not pypi_versions:
-        print("✅ 这是首次发布到 PyPI")
+        print("[OK] 这是首次发布到 PyPI")
         sys.exit(0)
 
     # 检查冲突
     if check_version_conflict(local_version, pypi_versions):
         sys.exit(1)
 
-    print("✅ 版本检查通过! 可以发布到 PyPI")
-    print(f"📋 PyPI 最新版本: {get_latest_version(pypi_versions)}")
+    print("[OK] 版本检查通过! 可以发布到 PyPI")
+    print(f"[INFO] PyPI 最新版本: {get_latest_version(pypi_versions)}")
 
 
 if __name__ == "__main__":

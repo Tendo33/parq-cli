@@ -2,6 +2,10 @@
 Tests for CLI commands.
 """
 
+import os
+import subprocess
+import sys
+
 import pytest
 import pyarrow.csv as pacsv
 from typer.testing import CliRunner
@@ -20,6 +24,24 @@ class TestCLI:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "parq" in result.output.lower()
+
+    def test_cli_help_with_gbk_encoding(self):
+        """Test --help works under GBK-style console encoding."""
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "gbk"
+        result = subprocess.run(
+            [sys.executable, "-m", "parq", "--help"],
+            capture_output=True,
+            text=True,
+            encoding="gbk",
+            errors="replace",
+            env=env,
+            cwd=os.getcwd(),
+        )
+
+        assert result.returncode == 0
+        assert "Usage:" in result.stdout
+        assert "UnicodeEncodeError" not in result.stderr
 
     def test_cli_version(self):
         """Test version option."""

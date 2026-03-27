@@ -10,7 +10,7 @@ import typer
 
 app = typer.Typer(
     name="parq",
-    help="A powerful command-line tool for inspecting Apache Parquet files 🚀",
+    help="A powerful command-line tool for inspecting Apache Parquet files",
     add_completion=False,
 )
 
@@ -68,7 +68,7 @@ def main(
         str, typer.Option("--output", "-o", help="Output format: rich, plain, json")
     ] = "rich",
 ) -> None:
-    """A powerful command-line tool for inspecting Apache Parquet files 🚀"""
+    """A powerful command-line tool for inspecting Apache Parquet files."""
     global _output_format
     _output_format = output
 
