@@ -129,7 +129,15 @@ When using `--file-count`, `N` must be a positive integer and cannot exceed the 
 ### Global Options
 
 - `--version, -v`: Display version information
+- `--output, -o`: Output format (`rich`, `plain`, `json`)
 - `--help`: Display help information
+
+## 📁 Large File Notes
+
+- Parquet metadata, `head`, and `tail` use PyArrow metadata and row-group optimizations where possible.
+- CSV preview, count, and split operations stream through the input in batches instead of materializing the full file up front.
+- XLSX preview, count, and split operations process rows incrementally to keep memory usage linear in the requested preview or chunk size.
+- Converting very large tabular files to Parquet still gives the best overall throughput, but large CSV/XLSX files no longer require full-table materialization for preview or split workflows.
 
 ## 🎨 Output Examples
 

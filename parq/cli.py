@@ -4,26 +4,36 @@ Command-line interface for parq-cli tool.
 """
 
 from pathlib import Path
+from enum import Enum
 from typing import Annotated, Any, Callable, Optional
 
 import typer
 
+
+class OutputFormat(str, Enum):
+    """Supported CLI output formats."""
+
+    RICH = "rich"
+    PLAIN = "plain"
+    JSON = "json"
+
+
 app = typer.Typer(
     name="parq",
-    help="A powerful command-line tool for inspecting Apache Parquet files 🚀",
+    help="A powerful command-line tool for inspecting tabular files 🚀",
     add_completion=False,
 )
 
-_output_format: str = "rich"
+_output_format: OutputFormat = OutputFormat.RICH
 
 
 def _get_formatter():
     """Lazy load formatter based on output format setting."""
-    if _output_format == "plain":
+    if _output_format == OutputFormat.PLAIN:
         from parq.plain_output import PlainOutputFormatter
 
         return PlainOutputFormatter()
-    elif _output_format == "json":
+    elif _output_format == OutputFormat.JSON:
         from parq.plain_output import JsonOutputFormatter
 
         return JsonOutputFormatter()
@@ -65,10 +75,10 @@ def main(
         bool, typer.Option("--version", "-v", help="Show version information")
     ] = False,
     output: Annotated[
-        str, typer.Option("--output", "-o", help="Output format: rich, plain, json")
-    ] = "rich",
+        OutputFormat, typer.Option("--output", "-o", help="Output format")
+    ] = OutputFormat.RICH,
 ) -> None:
-    """A powerful command-line tool for inspecting Apache Parquet files 🚀"""
+    """A powerful command-line tool for inspecting tabular files 🚀"""
     global _output_format
     _output_format = output
 
@@ -89,7 +99,7 @@ def meta(
     file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
 ) -> None:
     """
-    Display metadata information of a Parquet file.
+    Display metadata information of a tabular file.
 
     Example:
 
@@ -108,7 +118,7 @@ def schema(
     file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
 ) -> None:
     """
-    Display the schema of a Parquet file.
+    Display the schema of a tabular file.
 
     Example:
 
@@ -132,7 +142,7 @@ def head(
     ] = None,
 ) -> None:
     """
-    Display the first N rows of a Parquet file (default: 5).
+    Display the first N rows of a tabular file (default: 5).
 
     Examples:
 
@@ -161,7 +171,7 @@ def tail(
     ] = None,
 ) -> None:
     """
-    Display the last N rows of a Parquet file (default: 5).
+    Display the last N rows of a tabular file (default: 5).
 
     Examples:
 
@@ -185,7 +195,7 @@ def count(
     file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
 ) -> None:
     """
-    Display the total row count of a Parquet file.
+    Display the total row count of a tabular file.
 
     Example:
 
@@ -261,7 +271,7 @@ def split(
         reader = _get_reader(str(file))
 
         # Setup progress bar (skip for plain/json modes)
-        if _output_format == "rich":
+        if _output_format == OutputFormat.RICH:
             from rich.progress import (
                 BarColumn,
                 Progress,

@@ -120,7 +120,15 @@ parq split FILE -f 3 -n "output/part-%02d.parquet"
 ### 全局选项
 
 - `--version, -v`: 显示版本信息
+- `--output, -o`: 输出格式（`rich`、`plain`、`json`）
 - `--help`: 显示帮助信息
+
+## 📁 大文件说明
+
+- Parquet 的元数据读取、`head` 和 `tail` 会尽量利用 PyArrow 的元数据与 row group 优化。
+- CSV 的预览、计数和分割会按批次流式处理，不再在开始前整体载入文件。
+- XLSX 的预览、计数和分割会按行增量处理，内存占用与请求的预览行数或分块大小保持线性关系。
+- 对于非常大的表格文件，先转换为 Parquet 仍然能获得更高吞吐，但 CSV/XLSX 的预览和分割流程已经不再依赖整表物化。
 
 ## 🎨 输出示例
 
