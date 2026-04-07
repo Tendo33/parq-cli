@@ -371,6 +371,32 @@ class TestMultiFormatReader:
         assert reader.input_format == "xlsx"
         assert reader.num_rows == 5
 
+    def test_reader_initialization_csv_is_lazy(self, sample_csv_file, monkeypatch):
+        """CSV reader should not materialize the full table during initialization."""
+
+        def fail_read_csv(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("csv initialized eagerly")
+
+        monkeypatch.setattr("parq.reader.pacsv.read_csv", fail_read_csv)
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        assert reader.file_path == sample_csv_file
+        assert reader.input_format == "csv"
+
+    def test_reader_initialization_xlsx_is_lazy(self, sample_xlsx_file, monkeypatch):
+        """XLSX reader should not materialize the full table during initialization."""
+
+        def fail_scan_xlsx(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("xlsx initialized eagerly")
+
+        monkeypatch.setattr("parq.reader._scan_xlsx_metadata", fail_scan_xlsx)
+
+        reader = MultiFormatReader(str(sample_xlsx_file))
+        assert reader.file_path == sample_xlsx_file
+        assert reader.input_format == "xlsx"
+
     def test_unsupported_extension(self, tmp_path):
         unsupported = tmp_path / "data.json"
         unsupported.write_text('{"a": 1}', encoding="utf-8")
@@ -383,12 +409,77 @@ class TestMultiFormatReader:
         assert len(table) == 2
         assert table.column_names == ["id", "name"]
 
+    def test_csv_count_uses_streaming_reader(self, sample_csv_file, monkeypatch):
+        """CSV row counting should work without falling back to full-table read_csv."""
+        open_csv_calls = {"count": 0}
+        original_open_csv = pacsv.open_csv
+
+        def wrapped_open_csv(*args, **kwargs):
+            open_csv_calls["count"] += 1
+            return original_open_csv(*args, **kwargs)
+
+        def fail_read_csv(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("csv count used read_csv")
+
+        monkeypatch.setattr("parq.reader.pacsv.open_csv", wrapped_open_csv)
+        monkeypatch.setattr("parq.reader.pacsv.read_csv", fail_read_csv)
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        assert reader.num_rows == 5
+        assert open_csv_calls["count"] >= 1
+
+    def test_xlsx_tail_uses_row_iteration(self, sample_xlsx_file, monkeypatch):
+        """XLSX tail should work without going through full-table materialization."""
+        def fail_read_columns(self, columns=None):
+            del self, columns
+            raise AssertionError("xlsx tail fell back to read_columns")
+
+        monkeypatch.setattr(MultiFormatReader, "read_columns", fail_read_columns)
+
+        reader = MultiFormatReader(str(sample_xlsx_file))
+        table = reader.read_tail(2, columns=["id", "city"])
+        assert table.column_names == ["id", "city"]
+        assert table["id"].to_pylist() == [4, 5]
+        assert table["city"].to_pylist() == ["Tokyo", "Sydney"]
+
+    @pytest.mark.parametrize("fixture_name", ["sample_csv_file", "sample_xlsx_file"])
+    def test_zero_row_preview_preserves_selected_schema(self, fixture_name, request):
+        """Zero-row previews should keep selected columns and empty schema shape."""
+        input_file = request.getfixturevalue(fixture_name)
+        reader = MultiFormatReader(str(input_file))
+
+        head_table = reader.read_head(0, columns=["id", "name"])
+        tail_table = reader.read_tail(0, columns=["id", "name"])
+
+        assert head_table.column_names == ["id", "name"]
+        assert tail_table.column_names == ["id", "name"]
+        assert head_table.num_rows == 0
+        assert tail_table.num_rows == 0
+
     def test_split_csv_to_parquet(self, sample_csv_file, tmp_path):
         reader = MultiFormatReader(str(sample_csv_file))
         output_pattern = str(tmp_path / "split-%02d.parquet")
         output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
         assert len(output_files) == 3
         row_counts = [ParquetReader(str(p)).num_rows for p in output_files]
+        assert row_counts == [2, 2, 1]
+
+    @pytest.mark.parametrize("suffix", [".parquet", ".csv", ".xlsx"])
+    def test_split_xlsx_to_supported_outputs(self, sample_xlsx_file, tmp_path, suffix):
+        pytest.importorskip("openpyxl")
+        reader = MultiFormatReader(str(sample_xlsx_file))
+        output_pattern = str(tmp_path / f"split-%02d{suffix}")
+        output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
+        assert len(output_files) == 3
+
+        if suffix == ".parquet":
+            row_counts = [ParquetReader(str(p)).num_rows for p in output_files]
+        elif suffix == ".csv":
+            row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
+        else:
+            row_counts = [MultiFormatReader(str(p)).num_rows for p in output_files]
+
         assert row_counts == [2, 2, 1]
 
     def test_split_parquet_to_csv_writes_csv_content(self, sample_parquet_file, tmp_path):
@@ -398,6 +489,41 @@ class TestMultiFormatReader:
         assert len(output_files) == 3
         row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
         assert row_counts == [2, 2, 1]
+
+    def test_split_parquet_to_csv_does_not_materialize_full_table(
+        self, sample_parquet_file, tmp_path, monkeypatch
+    ):
+        """Parquet -> CSV split should stream batches instead of read_columns()."""
+
+        def fail_read_columns(self, columns=None):
+            del self, columns
+            raise AssertionError("read_columns should not be used for parquet->csv split")
+
+        monkeypatch.setattr(ParquetReader, "read_columns", fail_read_columns)
+
+        reader = MultiFormatReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%02d.csv")
+        output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
+        assert len(output_files) == 3
+        row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
+        assert row_counts == [2, 2, 1]
+
+    def test_split_parquet_to_xlsx_does_not_materialize_full_table(
+        self, sample_parquet_file, tmp_path, monkeypatch
+    ):
+        """Parquet -> XLSX split should stream batches instead of read_columns()."""
+        pytest.importorskip("openpyxl")
+
+        def fail_read_columns(self, columns=None):
+            del self, columns
+            raise AssertionError("read_columns should not be used for parquet->xlsx split")
+
+        monkeypatch.setattr(ParquetReader, "read_columns", fail_read_columns)
+
+        reader = MultiFormatReader(str(sample_parquet_file))
+        output_pattern = str(tmp_path / "split-%02d.xlsx")
+        output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
+        assert len(output_files) == 3
 
     def test_split_csv_with_file_count_has_no_empty_output(self, sample_csv_file, tmp_path):
         reader = MultiFormatReader(str(sample_csv_file))
@@ -424,12 +550,24 @@ class TestMultiFormatReader:
         """Test non-parquet split cleanup also removes partially-created failed output file."""
         import parq.reader as reader_mod
 
-        def failing_write(table, output_path):
-            del table
-            Path(output_path).touch()
-            raise OSError("simulated non-parquet write failure")
+        class FailingWriter:
+            def __init__(self, output_path):
+                self.output_path = Path(output_path)
+                self.output_path.parent.mkdir(parents=True, exist_ok=True)
+                self.output_path.touch()
 
-        monkeypatch.setattr(reader_mod, "_write_table_by_suffix", failing_write)
+            def write_batch(self, batch):
+                del batch
+                raise OSError("simulated non-parquet write failure")
+
+            def close(self):
+                return None
+
+        def failing_open_writer(output_path, schema, compression=None):
+            del schema, compression
+            return FailingWriter(output_path)
+
+        monkeypatch.setattr(reader_mod, "_open_chunk_writer", failing_open_writer)
 
         reader = MultiFormatReader(str(sample_csv_file))
         output_pattern = str(tmp_path / "split-%02d.csv")

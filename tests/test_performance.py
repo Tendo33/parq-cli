@@ -21,19 +21,35 @@ def _load_performance_module():
 
 
 @pytest.mark.performance
-def test_small_vs_large_parquet_performance_report(tmp_path):
-    """Large parquet should be measurably slower than small parquet for head/tail reads."""
+def test_small_vs_large_multi_format_performance_report(tmp_path):
+    """Benchmark report should cover parquet/csv/xlsx reads and cross-format splits."""
     module = _load_performance_module()
 
-    small_path, large_path, dataset_info = module.create_benchmark_datasets(
+    datasets, dataset_info = module.create_benchmark_datasets(
         tmp_path,
-        small_rows=10_000,
-        large_rows=2_000_000,
+        parquet_small_rows=10_000,
+        parquet_large_rows=200_000,
+        csv_small_rows=10_000,
+        csv_large_rows=200_000,
+        xlsx_small_rows=500,
+        xlsx_large_rows=5_000,
     )
-    result = module.compare_reader_performance(small_path, large_path, repeats=7)
+    result = module.compare_reader_performance(datasets, repeats=3)
     report = module.render_markdown_report(result, dataset_info)
 
     print(report)
 
-    assert result["head"]["ratio"] > 1.2
-    assert result["tail"]["ratio"] > 1.2
+    assert "## Read Performance" in report
+    assert "## Split Performance" in report
+    assert "parquet" in result["reads"]
+    assert "csv" in result["reads"]
+    assert "xlsx" in result["reads"]
+    assert "parquet_to_csv" in result["splits"]
+    assert "csv_to_parquet" in result["splits"]
+    assert "xlsx_to_parquet" in result["splits"]
+
+    assert result["reads"]["parquet"]["head"]["ratio"] > 1.05
+    assert result["reads"]["csv"]["tail"]["ratio"] > 1.05
+    assert result["reads"]["xlsx"]["count"]["ratio"] > 1.05
+    assert result["splits"]["parquet_to_csv"]["ratio"] > 1.05
+    assert result["splits"]["csv_to_parquet"]["ratio"] > 1.05

@@ -24,6 +24,7 @@ class TestCLI:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "parq" in result.output.lower()
+        assert "tabular files" in result.output.lower()
 
     def test_cli_help_with_gbk_encoding(self):
         """Test --help works under GBK-style console encoding."""
@@ -133,6 +134,12 @@ class TestCLI:
         data = json.loads(result.output)
         assert data["count"] == 5
 
+    def test_cli_rejects_invalid_output_format(self, sample_parquet_file):
+        """Test --output rejects unsupported values instead of silently falling back."""
+        result = runner.invoke(app, ["--output", "xml", "count", str(sample_parquet_file)])
+        assert result.exit_code != 0
+        assert "invalid value" in result.output.lower()
+
     def test_cli_meta_plain(self, sample_parquet_file):
         """Test meta with --output plain."""
         result = runner.invoke(app, ["--output", "plain", "meta", str(sample_parquet_file)])
@@ -182,6 +189,17 @@ class TestCLI:
         assert result.exit_code == 0
         assert (tmp_path / "csv-split-00.parquet").exists()
         assert (tmp_path / "csv-split-01.parquet").exists()
+
+    def test_split_supports_xlsx_input(self, sample_xlsx_file, tmp_path):
+        """Test split command accepts xlsx input and writes parquet outputs."""
+        output_pattern = str(tmp_path / "xlsx-split-%02d.parquet")
+        result = runner.invoke(
+            app,
+            ["split", str(sample_xlsx_file), "--record-count", "2", "--name-format", output_pattern],
+        )
+        assert result.exit_code == 0
+        assert (tmp_path / "xlsx-split-00.parquet").exists()
+        assert (tmp_path / "xlsx-split-01.parquet").exists()
 
     def test_split_parquet_to_csv_output(self, sample_parquet_file, tmp_path):
         """Test split command writes CSV content when output suffix is .csv."""

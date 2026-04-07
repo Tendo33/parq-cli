@@ -126,7 +126,7 @@ mypy parq
 
 ### Q: 如何处理大文件？
 
-A: parq-cli 会自动处理大文件，使用流式读取避免内存溢出。
+A: Parquet 文件会尽量利用元数据和 row group 做更高效的读取；CSV 会按批次流式处理，XLSX 会按行增量处理，因此预览、计数和分割都不再需要先整表载入内存。对于超大数据集，Parquet 仍然会有更好的整体吞吐。
 
 ### Q: 支持哪些 Parquet 版本？
 
@@ -145,7 +145,7 @@ A:
 
 - 查看完整文档：[README.md](README.md)
 - 查看示例：[examples/README.md](examples/README.md)
-- 查看架构设计：[project_document/parq-cli-architecture-design.md](project_document/parq-cli-architecture-design.md)
+- 查看发布说明：[docs/RELEASE.md](docs/RELEASE.md)
 
 ## 💡 提示
 

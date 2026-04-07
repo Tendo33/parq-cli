@@ -27,3 +27,11 @@ def test_test_workflow_includes_performance_comparison_step():
     assert "Run performance comparison (small vs large parquet)" in content
     assert "pytest tests/test_performance.py -m performance -q -s" in content
     assert "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'" in content
+
+
+def test_test_workflow_installs_xlsx_support_for_public_feature_coverage():
+    """CI should install xlsx extras so advertised xlsx support is exercised."""
+    workflow_path = Path(".github/workflows/test.yml")
+    content = workflow_path.read_text(encoding="utf-8")
+
+    assert 'pip install -e ".[dev,xlsx]"' in content
