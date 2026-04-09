@@ -19,6 +19,9 @@ pip install -e .
 
 # 或安装开发依赖
 pip install -e ".[dev]"
+
+# 如需 .xlsx 支持
+pip install -e ".[dev,xlsx]"
 ```
 
 #### 使用 uv（更快）
@@ -127,6 +130,14 @@ mypy parq
 ### Q: 如何处理大文件？
 
 A: Parquet 文件会尽量利用元数据和 row group 做更高效的读取；CSV 会按批次流式处理，XLSX 会按行增量处理，因此预览、计数和分割都不再需要先整表载入内存。对于超大数据集，Parquet 仍然会有更好的整体吞吐。
+
+### Q: 空文件会怎么处理？
+
+A: 只有表头的 CSV/XLSX 会保留列信息并返回 `0 rows`。完全空的 CSV 因为没有可推断的 schema，会返回友好的 `Empty CSV file` 错误。
+
+### Q: `--output plain` 和 `--output json` 有什么区别？
+
+A: `plain` 适合 shell 管道，单元格里的制表符和换行会被转义成 `\t` / `\n`；`json` 适合程序消费，会保留结构化字段和值。
 
 ### Q: 支持哪些 Parquet 版本？
 

@@ -1,7 +1,7 @@
 [project]
 name = "parq-cli"
 version = "0.1.8"
-description = "A powerful command-line tool for inspecting and analyzing Apache Parquet files"
+description = "A powerful command-line tool for inspecting tabular files like Parquet, CSV, and XLSX"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -40,9 +40,11 @@ xlsx = [
     "openpyxl>=3.1.0",
 ]
 dev = [
+    "build>=1.2.0",
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.7.0",
+    "twine>=5.1.0",
     "vulture>=2.14",
 ]
 

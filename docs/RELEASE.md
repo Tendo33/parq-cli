@@ -6,7 +6,7 @@
 
 ```bash
 # 1. 确保所有测试通过
-pytest
+./.venv/bin/pytest -m "not performance"
 
 # 2. 自动升级版本、创建 commit 和 tag
 python scripts/bump_version.py patch --yes  # Bug 修复
@@ -37,7 +37,8 @@ git push origin v0.1.2  # 替换为实际版本号
 
 ## 🔍 发布前检查清单
 
-- [ ] 所有测试通过: `pytest`
+- [ ] 所有测试通过: `./.venv/bin/pytest -m "not performance"`
+- [ ] 如需 `.xlsx` 输入能力，已安装可选依赖: `uv sync --extra dev --extra xlsx`
 - [ ] 代码检查通过: `ruff check parq tests`
 - [ ] 版本号没有冲突: `python scripts/check_version.py`
 - [ ] CHANGELOG 已更新
@@ -115,7 +116,7 @@ git push origin v0.1.2
 
 ## 💡 最佳实践
 
-1. **发布前测试:** 始终运行 `pytest` 确保测试通过
+1. **发布前测试:** 始终运行 `./.venv/bin/pytest -m "not performance"` 确保测试通过
 2. **使用自动化:** 优先使用 `bump_version.py` 脚本
 3. **遵循语义化版本:** 正确选择 major/minor/patch
 4. **更新 CHANGELOG:** 每次发布前记录变更
@@ -125,4 +126,3 @@ git push origin v0.1.2
 
 **上次更新:** 2025-11-17
 **维护者:** SimonSun (@Tendo33)
-

@@ -71,6 +71,11 @@ git push origin v0.1.1  # 替换为实际版本号
 #    - 创建 GitHub Release
 ```
 
+手动发布脚本 `scripts/publish.sh` 约定:
+- 优先使用项目内的 `./.venv/bin/python`、`./.venv/bin/pytest`、`./.venv/bin/twine`
+- 默认执行 `./.venv/bin/pytest -m "not performance"`，与仓库日常验证策略保持一致
+- 若需要 `.xlsx` 支持，请先在虚拟环境中安装 `.[xlsx]`
+
 ### 方案 B: 手动流程
 
 ```bash
@@ -172,7 +177,7 @@ git push origin :refs/tags/v0.1.1
 
 5. ✅ **测试通过后再发布:**
    ```bash
-   pytest  # 运行测试
+   ./.venv/bin/pytest -m "not performance"
    python scripts/bump_version.py patch --push
    ```
 

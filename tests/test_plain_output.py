@@ -33,6 +33,13 @@ class TestPlainOutputFormatter:
         assert "1" in out
         assert "a" in out
 
+    def test_format_table_preserves_single_row_for_control_characters(self, capsys):
+        t = pa.table({"id": [1], "text": ["a\tb\nnext"]})
+        PlainOutputFormatter.print_table(t, "Test")
+        out_lines = capsys.readouterr().out.splitlines()
+        assert len(out_lines) == 2
+        assert out_lines[0] == "id\ttext"
+
 
 class TestJsonOutputFormatter:
     def test_format_count(self, capsys):

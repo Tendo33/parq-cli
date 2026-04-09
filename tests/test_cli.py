@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+import pyarrow as pa
 import pyarrow.csv as pacsv
 from typer.testing import CliRunner
 
@@ -162,6 +163,18 @@ class TestCLI:
         assert result.exit_code == 0
         lines = result.output.strip().split("\n")
         assert lines[0] == "id\tname"
+
+    def test_cli_head_plain_preserves_single_row_for_control_chars(self, tmp_path):
+        """Plain output should remain row-safe when cells contain tabs or newlines."""
+        table = pa.table({"id": [1], "text": ["a\tb\nnext"]})
+        file_path = tmp_path / "weird.csv"
+        pacsv.write_csv(table, file_path)
+
+        result = runner.invoke(app, ["--output", "plain", "head", str(file_path)])
+
+        assert result.exit_code == 0
+        assert len(result.output.splitlines()) == 2
+        assert result.output.splitlines()[0] == "id\ttext"
 
     @pytest.mark.parametrize("fixture_name", ["sample_csv_file", "sample_xlsx_file"])
     def test_read_commands_support_non_parquet_inputs(self, fixture_name, request):

@@ -16,6 +16,10 @@ python examples/create_sample_data.py
 - `large.parquet` - 较大的数据集（1000行）
 - `types.parquet` - 展示各种数据类型
 
+提示:
+- `.xlsx` 输入需要先安装可选依赖: `pip install "parq-cli[xlsx]"`
+- 只有表头的 CSV/XLSX 会显示空表和列名; 完全空的 CSV 会返回 `Empty CSV file`
+
 ## 使用示例
 
 ### 1. 查看文件元数据

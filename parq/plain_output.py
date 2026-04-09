@@ -1,5 +1,6 @@
 """Lightweight output formatters that bypass Rich for fast CLI output."""
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -12,23 +13,49 @@ class PlainOutputFormatter:
     """Tab-separated plain text output — zero Rich overhead."""
 
     @staticmethod
+    def _writer() -> csv.writer:
+        """Return a TSV writer that safely escapes embedded tabs and newlines."""
+        return csv.writer(sys.stdout, delimiter="\t", lineterminator="\n")
+
+    @staticmethod
+    def _normalize_value(value: Any) -> Any:
+        """Keep plain output physically single-line per row for shell pipelines."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+        return value
+
+    @staticmethod
     def print_metadata(metadata_dict: Dict[str, Any]) -> None:
+        writer = PlainOutputFormatter._writer()
         for k, v in metadata_dict.items():
-            print(f"{k}\t{v}")
+            writer.writerow([k, PlainOutputFormatter._normalize_value(v)])
 
     @staticmethod
     def print_schema(schema_info: List[Dict[str, Any]]) -> None:
-        print("name\ttype\tnullable")
+        writer = PlainOutputFormatter._writer()
+        writer.writerow(["name", "type", "nullable"])
         for col in schema_info:
-            print(f"{col['name']}\t{col['type']}\t{col['nullable']}")
+            writer.writerow(
+                [
+                    PlainOutputFormatter._normalize_value(col["name"]),
+                    PlainOutputFormatter._normalize_value(col["type"]),
+                    col["nullable"],
+                ]
+            )
 
     @staticmethod
     def print_table(arrow_table: pa.Table, title: str = "") -> None:
-        print("\t".join(arrow_table.column_names))
+        del title
+        writer = PlainOutputFormatter._writer()
+        writer.writerow(arrow_table.column_names)
         for batch in arrow_table.to_batches():
             d = batch.to_pydict()
             for i in range(len(batch)):
-                print("\t".join(str(d[c][i]) for c in arrow_table.column_names))
+                writer.writerow(
+                    [PlainOutputFormatter._normalize_value(d[c][i]) for c in arrow_table.column_names]
+                )
 
     @staticmethod
     def print_count(count: int) -> None:
@@ -49,12 +76,13 @@ class PlainOutputFormatter:
         total_rows: int,
         elapsed_time: float,
     ) -> None:
-        print(f"source\t{source_file}")
-        print(f"total_rows\t{total_rows}")
-        print(f"output_files\t{len(output_files)}")
-        print(f"elapsed\t{elapsed_time:.2f}s")
+        writer = PlainOutputFormatter._writer()
+        writer.writerow(["source", PlainOutputFormatter._normalize_value(str(source_file))])
+        writer.writerow(["total_rows", total_rows])
+        writer.writerow(["output_files", len(output_files)])
+        writer.writerow(["elapsed", f"{elapsed_time:.2f}s"])
         for f in output_files:
-            print(f"  {f}")
+            writer.writerow(["file", PlainOutputFormatter._normalize_value(str(f))])
 
 
 class JsonOutputFormatter:
@@ -102,4 +130,3 @@ class JsonOutputFormatter:
             "output_files": [str(f) for f in output_files],
             "elapsed_seconds": round(elapsed_time, 2),
         }))
-

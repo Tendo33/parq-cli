@@ -97,6 +97,7 @@ parq tail -n N FILE
 Notes:
 - `N` must be a non-negative integer.
 - If the input file does not exist, parq exits with code `1` and prints a friendly error message.
+- Header-only CSV/XLSX files return an empty preview with the detected columns; an empty CSV with no header returns a friendly `Empty CSV file` error.
 - Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
 
 ### Statistics
@@ -131,6 +132,11 @@ When using `--file-count`, `N` must be a positive integer and cannot exceed the 
 - `--version, -v`: Display version information
 - `--output, -o`: Output format (`rich`, `plain`, `json`)
 - `--help`: Display help information
+
+Output mode notes:
+- `rich` is optimized for human-readable terminal inspection.
+- `plain` is optimized for shell pipelines and escapes embedded tabs/newlines as `\t` and `\n`.
+- `json` is optimized for machine-readable integrations and preserves row values structurally.
 
 ## 📁 Large File Notes
 

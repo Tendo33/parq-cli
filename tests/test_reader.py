@@ -387,15 +387,73 @@ class TestMultiFormatReader:
     def test_reader_initialization_xlsx_is_lazy(self, sample_xlsx_file, monkeypatch):
         """XLSX reader should not materialize the full table during initialization."""
 
-        def fail_scan_xlsx(*args, **kwargs):
+        def fail_scan_xlsx_structure(*args, **kwargs):
             del args, kwargs
             raise AssertionError("xlsx initialized eagerly")
 
-        monkeypatch.setattr("parq.reader._scan_xlsx_metadata", fail_scan_xlsx)
+        monkeypatch.setattr("parq.reader._scan_xlsx_structure", fail_scan_xlsx_structure)
 
         reader = MultiFormatReader(str(sample_xlsx_file))
         assert reader.file_path == sample_xlsx_file
         assert reader.input_format == "xlsx"
+
+    def test_xlsx_head_does_not_trigger_row_count_scan(self, sample_xlsx_file, monkeypatch):
+        """XLSX head should not count the entire sheet before returning a preview."""
+
+        def fail_count_rows(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("xlsx head triggered row counting")
+
+        monkeypatch.setattr("parq.reader._count_xlsx_rows", fail_count_rows)
+
+        reader = MultiFormatReader(str(sample_xlsx_file))
+        table = reader.read_head(2)
+
+        assert table["id"].to_pylist() == [1, 2]
+
+    def test_xlsx_count_uses_dedicated_row_counter(self, tmp_path, monkeypatch):
+        """Large XLSX counts should come from the dedicated row-count path."""
+        openpyxl = pytest.importorskip("openpyxl")
+        file_path = tmp_path / "large.xlsx"
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["id", "name"])
+        for i in range(1005):
+            worksheet.append([i + 1, f"name-{i + 1}"])
+        workbook.save(file_path)
+        workbook.close()
+
+        calls = {"count": 0}
+        original_count_rows = __import__("parq.reader", fromlist=["_count_xlsx_rows"])._count_xlsx_rows
+
+        def wrapped_count_rows(*args, **kwargs):
+            calls["count"] += 1
+            return original_count_rows(*args, **kwargs)
+
+        monkeypatch.setattr("parq.reader._count_xlsx_rows", wrapped_count_rows)
+
+        reader = MultiFormatReader(str(file_path))
+        assert reader.num_rows == 1005
+        assert calls["count"] == 1
+
+    def test_xlsx_schema_inference_handles_late_type_widening(self, tmp_path):
+        """A later string value should widen an earlier integer column to string."""
+        openpyxl = pytest.importorskip("openpyxl")
+        file_path = tmp_path / "late-widen.xlsx"
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["value"])
+        for i in range(1000):
+            worksheet.append([i])
+        worksheet.append(["text-after-1000"])
+        workbook.save(file_path)
+        workbook.close()
+
+        reader = MultiFormatReader(str(file_path))
+
+        assert str(reader.schema.field("value").type) == "string"
+        tail_table = reader.read_tail(1)
+        assert tail_table["value"].to_pylist() == ["text-after-1000"]
 
     def test_unsupported_extension(self, tmp_path):
         unsupported = tmp_path / "data.json"

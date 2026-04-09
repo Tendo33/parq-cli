@@ -18,6 +18,14 @@ def test_publish_workflow_requires_multi_os_tests_before_publish():
     assert "pytest" in content
 
 
+def test_publish_workflow_installs_xlsx_support_before_release_tests():
+    """Release workflow should exercise advertised xlsx support before publishing."""
+    workflow_path = Path(".github/workflows/publish.yml")
+    content = workflow_path.read_text(encoding="utf-8")
+
+    assert 'pip install -e ".[dev,xlsx]"' in content
+
+
 def test_test_workflow_includes_performance_comparison_step():
     """Main test workflow should run small-vs-large parquet perf comparison in CI."""
     workflow_path = Path(".github/workflows/test.yml")

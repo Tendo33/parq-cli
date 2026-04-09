@@ -123,6 +123,15 @@ def _merge_arrow_types(
     return pa.string()
 
 
+def _coerce_value_for_field(value: Any, field: pa.Field) -> Any:
+    """Coerce row values to match the selected Arrow field when needed."""
+    if value is None:
+        return None
+    if pa.types.is_string(field.type) and not isinstance(value, str):
+        return str(value)
+    return value
+
+
 def _iter_csv_batches(
     file_path: Path,
     columns: Optional[List[str]] = None,
@@ -142,8 +151,8 @@ def _scan_csv_metadata(file_path: Path, include_row_count: bool = False) -> _Inp
     return _InputMetadata(headers=tuple(schema.names), schema=schema, num_rows=num_rows)
 
 
-def _scan_xlsx_metadata(file_path: Path) -> _InputMetadata:
-    """Scan xlsx once to compute normalized headers, schema, and row count."""
+def _scan_xlsx_structure(file_path: Path, sample_size: int = 1000) -> _InputMetadata:
+    """Scan xlsx headers/schema, caching exact row counts only for smaller sheets."""
     openpyxl = _require_openpyxl()
     workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     try:
@@ -155,10 +164,10 @@ def _scan_xlsx_metadata(file_path: Path) -> _InputMetadata:
 
         headers = _normalize_excel_headers(list(header))
         inferred_types: list[Optional[pa.DataType]] = [None] * len(headers)
-        num_rows = 0
+        total_rows = 0
 
         for row in rows:
-            num_rows += 1
+            total_rows += 1
             row_values = list(row) if row is not None else []
             for idx, _name in enumerate(headers):
                 value = row_values[idx] if idx < len(row_values) else None
@@ -172,7 +181,26 @@ def _scan_xlsx_metadata(file_path: Path) -> _InputMetadata:
                 for name, inferred_type in zip(headers, inferred_types)
             ]
         )
-        return _InputMetadata(headers=tuple(headers), schema=schema, num_rows=num_rows)
+        return _InputMetadata(
+            headers=tuple(headers),
+            schema=schema,
+            num_rows=total_rows if total_rows <= sample_size else None,
+        )
+    finally:
+        workbook.close()
+
+
+def _count_xlsx_rows(file_path: Path) -> int:
+    """Count xlsx data rows exactly, excluding the header row."""
+    openpyxl = _require_openpyxl()
+    workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        rows = worksheet.iter_rows(values_only=True)
+        header = next(rows, None)
+        if header is None:
+            return 0
+        return sum(1 for _ in rows)
     finally:
         workbook.close()
 
@@ -196,14 +224,18 @@ def _iter_xlsx_batches(
         selected_columns = list(metadata.headers) if columns is None else columns
         selected_indices = [metadata.headers.index(column) for column in selected_columns]
         selected_schema = _select_schema(metadata.schema, selected_columns)
+        selected_fields = [selected_schema.field(column) for column in selected_columns]
         buffered_rows: list[dict[str, Any]] = []
 
         for row in rows:
             row_values = list(row) if row is not None else []
             buffered_rows.append(
                 {
-                    column: row_values[idx] if idx < len(row_values) else None
-                    for column, idx in zip(selected_columns, selected_indices)
+                    column: _coerce_value_for_field(
+                        row_values[idx] if idx < len(row_values) else None,
+                        field,
+                    )
+                    for column, idx, field in zip(selected_columns, selected_indices, selected_fields)
                 }
             )
             if len(buffered_rows) >= batch_size:
@@ -740,7 +772,13 @@ class MultiFormatReader:
 
         if self.input_format == "xlsx":
             if self._metadata_cache is None:
-                self._metadata_cache = _scan_xlsx_metadata(self.file_path)
+                self._metadata_cache = _scan_xlsx_structure(self.file_path)
+            if include_row_count and self._metadata_cache.num_rows is None:
+                self._metadata_cache = _InputMetadata(
+                    headers=self._metadata_cache.headers,
+                    schema=self._metadata_cache.schema,
+                    num_rows=_count_xlsx_rows(self.file_path),
+                )
             return self._metadata_cache
 
         if self._metadata_cache is None or (include_row_count and self._metadata_cache.num_rows is None):
