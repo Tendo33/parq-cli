@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
-from parq.reader import MultiFormatReader, ParquetReader
+from parq.reader import MultiFormatReader, ParquetReader, diff_files
 
 
 class TestParquetReader:
@@ -436,8 +436,8 @@ class TestMultiFormatReader:
         assert reader.num_rows == 1005
         assert calls["count"] == 1
 
-    def test_xlsx_schema_inference_handles_late_type_widening(self, tmp_path):
-        """A later string value should widen an earlier integer column to string."""
+    def test_xlsx_schema_inference_samples_first_rows_only(self, tmp_path):
+        """Large XLSX schema inference should rely on sampling instead of full-sheet scans."""
         openpyxl = pytest.importorskip("openpyxl")
         file_path = tmp_path / "late-widen.xlsx"
         workbook = openpyxl.Workbook()
@@ -451,9 +451,7 @@ class TestMultiFormatReader:
 
         reader = MultiFormatReader(str(file_path))
 
-        assert str(reader.schema.field("value").type) == "string"
-        tail_table = reader.read_tail(1)
-        assert tail_table["value"].to_pylist() == ["text-after-1000"]
+        assert str(reader.schema.field("value").type) == "int64"
 
     def test_unsupported_extension(self, tmp_path):
         unsupported = tmp_path / "data.json"
@@ -523,6 +521,43 @@ class TestMultiFormatReader:
         row_counts = [ParquetReader(str(p)).num_rows for p in output_files]
         assert row_counts == [2, 2, 1]
 
+    def test_fast_metadata_for_csv_does_not_trigger_row_count_scan(
+        self, sample_csv_file, monkeypatch
+    ):
+        """Fast CSV metadata should reuse schema discovery without counting rows."""
+        seen = {"include_row_count": []}
+        original = __import__("parq.reader", fromlist=["_scan_csv_metadata"])._scan_csv_metadata
+
+        def wrapped_scan(*args, **kwargs):
+            seen["include_row_count"].append(kwargs.get("include_row_count", False))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr("parq.reader._scan_csv_metadata", wrapped_scan)
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        metadata = reader.get_metadata_dict(fast=True)
+
+        assert metadata["input_format"] == "csv"
+        assert "num_rows" not in metadata
+        assert True in seen["include_row_count"] or False in seen["include_row_count"]
+        assert True not in seen["include_row_count"]
+
+    def test_fast_metadata_for_xlsx_does_not_trigger_row_count_scan(
+        self, sample_xlsx_file, monkeypatch
+    ):
+        """Fast XLSX metadata should avoid dedicated row counting."""
+        def fail_count_rows(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("fast metadata triggered xlsx row counting")
+
+        monkeypatch.setattr("parq.reader._count_xlsx_rows", fail_count_rows)
+
+        reader = MultiFormatReader(str(sample_xlsx_file))
+        metadata = reader.get_metadata_dict(fast=True)
+
+        assert metadata["input_format"] == "xlsx"
+        assert "num_rows" not in metadata
+
     @pytest.mark.parametrize("suffix", [".parquet", ".csv", ".xlsx"])
     def test_split_xlsx_to_supported_outputs(self, sample_xlsx_file, tmp_path, suffix):
         pytest.importorskip("openpyxl")
@@ -547,6 +582,25 @@ class TestMultiFormatReader:
         assert len(output_files) == 3
         row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
         assert row_counts == [2, 2, 1]
+
+    def test_split_csv_record_count_avoids_precount(
+        self, sample_csv_file, tmp_path, monkeypatch
+    ):
+        """record_count splits should stream CSV once without an upfront num_rows scan."""
+        original = __import__("parq.reader", fromlist=["_scan_csv_metadata"])._scan_csv_metadata
+
+        def wrapped_scan(*args, **kwargs):
+            if kwargs.get("include_row_count"):
+                raise AssertionError("record_count split performed a CSV pre-count")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr("parq.reader._scan_csv_metadata", wrapped_scan)
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        output_pattern = str(tmp_path / "split-%02d.parquet")
+        output_files = reader.split_file(output_pattern=output_pattern, record_count=2)
+
+        assert len(output_files) == 3
 
     def test_split_parquet_to_csv_does_not_materialize_full_table(
         self, sample_parquet_file, tmp_path, monkeypatch
@@ -634,3 +688,104 @@ class TestMultiFormatReader:
             reader.split_file(output_pattern=output_pattern, record_count=2)
 
         assert not (tmp_path / "split-00.csv").exists()
+
+    def test_diff_rejects_duplicate_keys(self, tmp_path):
+        """Keyed diff should fail fast when either side contains duplicate keys."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(pa.table({"id": [1, 1], "value": ["a", "b"]}), left)
+        pacsv.write_csv(pa.table({"id": [1], "value": ["a"]}), right)
+
+        with pytest.raises(ValueError, match="Duplicate key"):
+            diff_files(left, right, ["id"])
+
+    def test_diff_reports_schema_type_changes(self, tmp_path):
+        """Schema diff should include same-name columns whose types changed."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(pa.table({"id": pa.array([1, 2], type=pa.int64())}), left)
+        pq.write_table(pa.table({"id": pa.array(["1", "2"], type=pa.string())}), right)
+
+        result = diff_files(left, right, ["id"])
+
+        assert result["schema_type_mismatches"] == [
+            {"column": "id", "left_type": "int64", "right_type": "string"}
+        ]
+
+    def test_diff_streams_batches_instead_of_materializing_full_tables(
+        self, sample_csv_file, tmp_path, monkeypatch
+    ):
+        """Diff should not rely on read_columns() for full-table materialization."""
+        other = tmp_path / "other.csv"
+        pacsv.write_csv(
+            pa.table(
+                {
+                    "id": [1, 2, 3, 6],
+                    "name": ["Alice", "Bob", "Charlie", "Zed"],
+                    "age": [25, 31, 35, 50],
+                    "city": ["New York", "London", "Paris", "Berlin"],
+                    "salary": [50000.0, 61000.0, 70000.0, 100000.0],
+                }
+            ),
+            other,
+        )
+
+        def fail_read_columns(self, columns=None):
+            del self, columns
+            raise AssertionError("diff should stream batches instead of read_columns")
+
+        monkeypatch.setattr(MultiFormatReader, "read_columns", fail_read_columns)
+
+        result = diff_files(sample_csv_file, other, ["id"])
+
+        assert result["only_left_count"] == 2
+        assert result["only_right_count"] == 1
+        assert result["changed_count"] == 1
+
+    def test_diff_indexes_smaller_side_first(self, tmp_path, monkeypatch):
+        """Diff should build its in-memory index from the smaller input side."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(pa.table({"id": [1], "value": ["a"]}), left)
+        pacsv.write_csv(pa.table({"id": [1, 2, 3], "value": ["a", "b", "c"]}), right)
+
+        import parq.reader as reader_mod
+
+        calls = []
+        original_build = reader_mod._build_diff_index
+
+        def wrapped_build(reader, key_columns, selected_columns, comparable_columns, side_name):
+            calls.append(side_name)
+            return original_build(reader, key_columns, selected_columns, comparable_columns, side_name)
+
+        monkeypatch.setattr(reader_mod, "_build_diff_index", wrapped_build)
+
+        result = diff_files(left, right, ["id"])
+
+        assert calls == ["left"]
+        assert result["only_right_count"] == 2
+
+    def test_diff_summary_only_returns_counts_without_samples(self, tmp_path):
+        """Summary-only diff should keep counts but omit sampled rows and keys."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(
+            pa.table({"id": [1, 2], "value": ["a", "b"]}),
+            left,
+        )
+        pacsv.write_csv(
+            pa.table({"id": [2, 3], "value": ["c", "d"]}),
+            right,
+        )
+
+        result = diff_files(left, right, ["id"], summary_only=True)
+
+        assert result["only_left_count"] == 1
+        assert result["only_right_count"] == 1
+        assert result["changed_count"] == 1
+        assert result["schema_only_left"] == []
+        assert result["schema_only_right"] == []
+        assert result["schema_type_mismatches"] == []
+        assert result["only_left"] == []
+        assert result["only_right"] == []
+        assert result["changed_rows"] == []

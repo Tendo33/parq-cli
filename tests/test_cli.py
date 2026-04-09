@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from parq import __version__
 from parq.cli import app
+from parq.reader import ParquetReader
 
 runner = CliRunner()
 
@@ -50,6 +51,28 @@ class TestCLI:
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert __version__ in result.output
+
+    @pytest.mark.parametrize("command", ["meta", "count", "schema", "head", "tail"])
+    def test_cli_commands_work_with_gbk_encoding(self, command, sample_parquet_file):
+        """Rich-rendered commands should not crash under GBK-style console encoding."""
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "gbk"
+        argv = [sys.executable, "-m", "parq", command, str(sample_parquet_file)]
+        if command in {"head", "tail"}:
+            argv[4:4] = ["-n", "2"]
+
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="gbk",
+            errors="replace",
+            env=env,
+            cwd=os.getcwd(),
+        )
+
+        assert result.returncode == 0
+        assert "UnicodeEncodeError" not in result.stderr
 
     def test_cli_file_not_found(self):
         """Test error handling for non-existent file."""
@@ -146,6 +169,16 @@ class TestCLI:
         result = runner.invoke(app, ["--output", "plain", "meta", str(sample_parquet_file)])
         assert result.exit_code == 0
         assert "num_rows\t5" in result.output
+
+    @pytest.mark.parametrize("fixture_name", ["sample_csv_file", "sample_xlsx_file"])
+    def test_cli_meta_fast_skips_num_rows_for_expensive_inputs(self, fixture_name, request):
+        """Fast metadata mode should avoid expensive row counts for non-parquet inputs."""
+        input_file = request.getfixturevalue(fixture_name)
+        result = runner.invoke(app, ["--output", "plain", "meta", "--fast", str(input_file)])
+        assert result.exit_code == 0
+        assert "file_path\t" in result.output
+        assert "num_columns\t" in result.output
+        assert "num_rows\t" not in result.output
 
     def test_cli_head_json(self, sample_parquet_file):
         """Test head with --output json."""
@@ -349,3 +382,72 @@ class TestCLI:
         result = runner.invoke(app, ["split", str(sample_csv_file), "--record-count", "1"])
         assert result.exit_code == 1
         assert "Failed to split file" in result.output
+
+    def test_cli_stats_plain(self, sample_parquet_file):
+        """Stats command should report column summaries in plain mode."""
+        result = runner.invoke(app, ["--output", "plain", "stats", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        assert result.output.splitlines()[0] == "name\ttype\tcount\tnull_count\tmin\tmax\tmean"
+        assert "salary" in result.output
+
+    def test_cli_convert_csv_to_parquet(self, sample_csv_file, tmp_path):
+        """Convert should write a single output file inferred from destination suffix."""
+        output_path = tmp_path / "converted.parquet"
+        result = runner.invoke(app, ["convert", str(sample_csv_file), str(output_path)])
+        assert result.exit_code == 0
+        assert output_path.exists()
+        assert ParquetReader(str(output_path)).num_rows == 5
+
+    def test_cli_diff_with_key(self, tmp_path):
+        """Diff should report left/right/changed row deltas for keyed comparisons."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(
+            pa.table({"id": [1, 2], "name": ["alice", "bob"], "score": [10, 20]}),
+            left,
+        )
+        pacsv.write_csv(
+            pa.table({"id": [2, 3], "name": ["bobby", "carol"], "score": [25, 30]}),
+            right,
+        )
+
+        result = runner.invoke(app, ["--output", "json", "diff", str(left), str(right), "--key", "id"])
+        assert result.exit_code == 0
+        data = __import__("json").loads(result.output)
+        assert data["row_count_delta"] == 0
+        assert data["only_left_count"] == 1
+        assert data["only_right_count"] == 1
+        assert data["changed_count"] == 1
+
+    def test_cli_diff_summary_only_json(self, tmp_path):
+        """summary-only diff should expose counts without sample payloads."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(pa.table({"id": [1, 2], "value": ["a", "b"]}), left)
+        pacsv.write_csv(pa.table({"id": [2, 3], "value": ["c", "d"]}), right)
+
+        result = runner.invoke(
+            app,
+            ["--output", "json", "diff", str(left), str(right), "--key", "id", "--summary-only"],
+        )
+
+        assert result.exit_code == 0
+        data = __import__("json").loads(result.output)
+        assert data["only_left_count"] == 1
+        assert data["only_right_count"] == 1
+        assert data["changed_count"] == 1
+        assert data["only_left"] == []
+        assert data["only_right"] == []
+        assert data["changed_rows"] == []
+
+    def test_cli_merge_csv_inputs(self, tmp_path):
+        """Merge should append multiple compatible files into one output."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        output_path = tmp_path / "merged.csv"
+        pacsv.write_csv(pa.table({"id": [1, 2], "name": ["a", "b"]}), left)
+        pacsv.write_csv(pa.table({"id": [3], "name": ["c"]}), right)
+
+        result = runner.invoke(app, ["merge", str(left), str(right), str(output_path)])
+        assert result.exit_code == 0
+        assert pacsv.read_csv(output_path).num_rows == 3

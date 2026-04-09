@@ -3,280 +3,298 @@
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-一个强大的 Apache Parquet 文件命令行工具 🚀
+一个用于查看、转换、对比和处理表格文件的命令行工具。
 
-[English](https://github.com/Tendo33/parq-cli/blob/main/README.md) | 简体中文
+[English](https://github.com/Tendo33/parq-cli/blob/main/README.md)
 
-## ✨ 特性
+## 简介
 
-- 📊 **元数据查看**: 快速查看 Parquet 文件的元数据信息（行数、列数、文件大小、压缩类型等）
-- 📋 **Schema 展示**: 美观地展示文件的列结构和数据类型
-- 👀 **数据预览**: 支持查看文件的前 N 行或后 N 行
-- 🔢 **行数统计**: 快速获取文件的总行数
-- ✂️ **文件分割**: 将大型 Parquet 文件分割成多个较小的文件
-- 🗜️ **压缩信息**: 显示文件压缩类型和文件大小
-- 🎨 **美观输出**: 使用 Rich 库提供彩色、格式化的终端输出
-- 📦 **智能显示**: 自动检测嵌套结构，显示逻辑列数和物理列数
+`parq` 面向日常最常见的表格文件操作，支持 `.parquet`、`.csv`、`.xlsx`：
 
-## 📦 安装
+- 查看元数据和 schema
+- 预览前几行或后几行
+- 统计总行数
+- 按文件数或记录数拆分文件
+- 生成轻量列统计
+- 在多种格式之间转换
+- 按主键对比两份数据
+- 合并兼容文件
+
+CLI 保持惰性导入，启动成本低；同时保留 `plain` 和 `json` 输出模式，方便脚本集成。对大 CSV/XLSX 的若干场景也尽量避免无意义的整表物化。
+
+## 安装
 
 ```bash
 pip install parq-cli
 ```
 
-## 🚀 快速开始
-
-### 基本用法
+如果你需要 `.xlsx` 支持，请安装可选依赖：
 
 ```bash
-# 查看文件元数据
-parq meta data.parquet
-
-# 显示 schema 信息
-parq schema data.parquet
-
-# 显示前 5 行（默认）
-parq head data.parquet
-
-# 显示前 10 行
-parq head -n 10 data.parquet
-
-# 显示后 5 行（默认）
-parq tail data.parquet
-
-# 显示后 20 行
-parq tail -n 20 data.parquet
-
-# 显示总行数
-parq count data.parquet
-
-# 将文件分割成 3 个部分
-parq split data.parquet --file-count 3
-
-# 每个文件包含 1000 条记录
-parq split data.parquet --record-count 1000
+pip install "parq-cli[xlsx]"
 ```
 
-## 📖 命令参考
+## 快速开始
 
-### 查看元数据
+```bash
+# 查看元数据
+parq meta data.parquet
+parq meta --fast data.csv
+
+# 查看 schema
+parq schema data.xlsx
+
+# 预览数据
+parq head data.parquet
+parq head -n 10 --columns id,name data.csv
+parq tail -n 20 data.csv
+
+# 统计总行数
+parq count data.parquet
+
+# 拆分文件
+parq split data.csv --record-count 100000 -n "chunks/part-%03d.csv"
+parq split data.parquet --file-count 4 -n "chunks/part-%02d.parquet"
+
+# 列统计
+parq stats sales.parquet --columns amount,discount --limit 10
+
+# 格式转换
+parq convert raw.xlsx cleaned.parquet
+parq convert source.parquet export.csv --columns id,name,status
+
+# 数据对比
+parq diff old.parquet new.parquet --key id --columns status,amount
+parq diff left.csv right.csv --key id --summary-only
+
+# 合并文件
+parq merge part-001.parquet part-002.parquet merged.parquet
+```
+
+## 支持的格式
+
+| 命令 | Parquet | CSV | XLSX |
+| --- | --- | --- | --- |
+| `meta` | 支持 | 支持 | 支持 |
+| `schema` | 支持 | 支持 | 支持 |
+| `head` / `tail` | 支持 | 支持 | 支持 |
+| `count` | 支持 | 支持 | 支持 |
+| `split` | 支持 | 支持 | 支持 |
+| `stats` | 支持 | 支持 | 支持 |
+| `convert` | 支持 | 支持 | 支持 |
+| `diff` | 支持 | 支持 | 先转换再对比 |
+| `merge` | 支持 | 支持 | 支持 |
+
+`XLSX` 依赖 `openpyxl`。
+
+## 命令说明
+
+### `meta`
 
 ```bash
 parq meta FILE
+parq meta --fast FILE
 ```
 
-显示 Parquet 文件的元数据信息（行数、列数、文件大小、压缩类型等）。
+显示文件级元数据，例如路径、格式、列数、文件大小、row group 数量，以及在可用时显示行数和 Parquet 特有信息。
 
-### 查看 Schema
+`--fast` 适合大 CSV/XLSX 文件的快速探测模式，会跳过完整行数这类代价较高的字段。
+
+### `schema`
 
 ```bash
 parq schema FILE
 ```
 
-显示 Parquet 文件的列结构和数据类型。
+显示列名、类型和 nullable 信息。
 
-### 预览数据
+### `head` 与 `tail`
 
 ```bash
-# 显示前 N 行（默认 5 行）
 parq head FILE
-parq head -n N FILE
+parq head -n 20 FILE
+parq head -n 20 --columns id,name FILE
 
-# 显示后 N 行（默认 5 行）
 parq tail FILE
-parq tail -n N FILE
+parq tail -n 20 FILE
+parq tail -n 20 --columns id,name FILE
 ```
 
 说明：
-- `N` 必须是非负整数。
-- 当输入文件不存在时，parq 会以退出码 `1` 退出并输出友好错误信息。
 
-### 统计信息
+- 默认预览 `5` 行
+- `--columns` 支持逗号分隔列名
+- 文件不存在时返回友好错误并以退出码 `1` 结束
+- 只有表头的 CSV/XLSX 会返回空预览，但仍保留识别到的列
+- 没有表头且完全为空的 CSV 会返回友好 `Empty CSV file` 错误
+
+### `count`
 
 ```bash
-# 显示总行数
 parq count FILE
 ```
 
-### 分割文件
+返回总行数。
+
+### `split`
 
 ```bash
-# 分割成 N 个文件
 parq split FILE --file-count N
-
-# 每个文件包含 M 条记录
-parq split FILE --record-count M
-
-# 自定义输出格式
-parq split FILE -f N -n "output-%03d.parquet"
-
-# 分割到子目录
-parq split FILE -f 3 -n "output/part-%02d.parquet"
+parq split FILE --record-count N
+parq split FILE --record-count 100000 -n "chunks/part-%03d.parquet"
 ```
 
-将 Parquet 文件分割成多个较小的文件。你可以指定输出文件的数量（`--file-count`）或每个文件的记录数（`--record-count`）。输出文件名根据 `--name-format` 参数格式化（默认：`result-%06d.parquet`）。  
-使用 `--file-count` 时，`N` 必须是正整数，且不能大于源文件总行数。
+把一个输入文件拆成多个输出文件。
 
-### 全局选项
+规则：
 
-- `--version, -v`: 显示版本信息
-- `--output, -o`: 输出格式（`rich`、`plain`、`json`）
-- `--help`: 显示帮助信息
+- `--file-count` 与 `--record-count` 二选一
+- 输出格式由 `--name-format` 的后缀决定
+- 不会覆盖已存在的目标文件
+- 在 `--record-count` 模式下，CSV/XLSX 现在走单遍流式拆分，不再先整表计数
 
-## 📁 大文件说明
-
-- Parquet 的元数据读取、`head` 和 `tail` 会尽量利用 PyArrow 的元数据与 row group 优化。
-- CSV 的预览、计数和分割会按批次流式处理，不再在开始前整体载入文件。
-- XLSX 的预览、计数和分割会按行增量处理，内存占用与请求的预览行数或分块大小保持线性关系。
-- 对于非常大的表格文件，先转换为 Parquet 仍然能获得更高吞吐，但 CSV/XLSX 的预览和分割流程已经不再依赖整表物化。
-
-## 🎨 输出示例
-
-### 元数据展示
-
-**普通文件（无嵌套结构）：**
+### `stats`
 
 ```bash
-$ parq meta data.parquet
+parq stats FILE
+parq stats FILE --columns amount,discount
+parq stats FILE --limit 20
 ```
 
-```
-╭─────────────────────── 📊 Parquet File Metadata ───────────────────────╮
-│ file_path: data.parquet                                                │
-│ num_rows: 1000                                                         │
-│ num_columns: 5 (logical)                                               │
-│ file_size: 123.45 KB                                                   │
-│ compression: SNAPPY                                                    │
-│ num_row_groups: 1                                                      │
-│ format_version: 2.6                                                    │
-│ serialized_size: 126412                                                │
-│ created_by: parquet-cpp-arrow version 18.0.0                          │
-╰────────────────────────────────────────────────────────────────────────╯
-```
+计算按列汇总的轻量统计：
 
-**嵌套结构文件（显示物理列数）：**
+- 数值列输出 `count`、`null_count`、`min`、`max`、`mean`
+- 非数值列输出 `count` 和 `null_count`
+- 默认 `--limit 50`，避免宽表直接刷满终端
+
+### `convert`
 
 ```bash
-$ parq meta nested.parquet
+parq convert SOURCE OUTPUT
+parq convert SOURCE OUTPUT --columns id,name,status
 ```
 
-```
-╭─────────────────────── 📊 Parquet File Metadata ───────────────────────╮
-│ file_path: nested.parquet                                              │
-│ num_rows: 500                                                          │
-│ num_columns: 3 (logical)                                               │
-│ num_physical_columns: 8 (storage)                                      │
-│ file_size: 2.34 MB                                                     │
-│ compression: ZSTD                                                      │
-│ num_row_groups: 2                                                      │
-│ format_version: 2.6                                                    │
-│ serialized_size: 2451789                                               │
-│ created_by: parquet-cpp-arrow version 21.0.0                          │
-╰────────────────────────────────────────────────────────────────────────╯
-```
+把一个支持的输入格式转换成另一个支持的输出格式，输出格式由 `OUTPUT` 后缀决定。
 
 说明：
-- `compression` 字段可能是单一压缩算法（如 `SNAPPY`），也可能在混合压缩场景下显示为逗号分隔的多个算法。
 
-### Schema 展示
+- 当前目标格式为 `.parquet`、`.csv`、`.xlsx`
+- 能流式处理的路径会尽量流式处理
+- 若输出文件已存在，会直接报错，不会覆盖
 
-```bash
-$ parq schema data.parquet
-```
-
-```
-                    📋 Schema Information
-┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Column Name ┃ Data Type     ┃ Nullable ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ id          │ int64         │ ✗        │
-│ name        │ string        │ ✓        │
-│ age         │ int64         │ ✓        │
-│ city        │ string        │ ✓        │
-│ salary      │ double        │ ✓        │
-└─────────────┴───────────────┴──────────┘
-```
-
-## 🛠️ 技术栈
-
-- **[PyArrow](https://arrow.apache.org/docs/python/)**: 高性能的 Parquet 读取引擎
-- **[Typer](https://typer.tiangolo.com/)**: 现代化的 CLI 框架
-- **[Rich](https://rich.readthedocs.io/)**: 美观的终端输出
-
-## 🧪 开发
-
-### 安装开发依赖
+### `diff`
 
 ```bash
-# 推荐使用 uv
+parq diff LEFT RIGHT --key id
+parq diff LEFT RIGHT --key id1,id2 --columns status,amount
+parq diff LEFT RIGHT --key id --summary-only
+```
+
+按主键比较两份数据，并输出：
+
+- 行数差值
+- 仅存在于左侧的数据
+- 仅存在于右侧的数据
+- 选定列上的变更行
+- 仅某一侧存在的 schema 列，以及同名异型字段
+
+说明：
+
+- `--key` 必填
+- `diff` 当前仅支持 Parquet 和 CSV
+- XLSX 需要先转换
+- 任一侧若出现重复 key，会直接报错
+- `--summary-only` 只保留计数，不输出样本内容
+
+### `merge`
+
+```bash
+parq merge INPUT1 INPUT2 OUTPUT
+parq merge chunks/*.parquet merged.parquet
+```
+
+把多个兼容输入文件合并成一个输出文件。最后一个位置参数是输出路径。
+
+说明：
+
+- schema 必须一致，或能被 Arrow 安全统一
+- 不会覆盖已存在的输出文件
+- 输出格式由输出文件后缀决定
+
+## 输出模式
+
+全局选项：
+
+- `--version`, `-v`：显示版本号
+- `--output`, `-o`：选择输出格式
+- `--help`：显示帮助
+
+可选输出模式：
+
+- `rich`：适合人在终端中阅读
+- `plain`：低开销、便于 shell 管道处理
+- `json`：适合程序消费和集成
+
+示例：
+
+```bash
+parq meta data.parquet --output json
+parq stats data.csv --output plain
+parq diff left.parquet right.parquet --key id --summary-only --output json
+```
+
+在 Windows 非 UTF-8 终端中，Rich 标题会自动降级为安全样式，不再因为 emoji 或特殊字符编码失败而崩溃。
+
+## 大文件说明
+
+- Parquet 的元数据、行数和预览会优先利用 Arrow metadata 与 row group 能力。
+- CSV `tail` 使用固定大小列窗口，而不是把整份数据都转成 Python dict。
+- CSV/XLSX 的 `split --record-count` 走单遍流式处理。
+- 对大 CSV/XLSX，`meta --fast` 是最快的元数据探查入口。
+- XLSX 的 schema 推断只采样前 1000 行，不再默认整表扫描。
+
+如果你会反复处理大文件，把 CSV/XLSX 先转成 Parquet 依然是吞吐量最好的路径。
+
+## 开发
+
+安装开发依赖：
+
+```bash
 uv sync --extra dev
+```
 
-# 或使用 pip
+或者：
+
+```bash
 pip install -e ".[dev]"
 ```
 
-### 运行测试
+常用命令：
 
 ```bash
-pytest
-```
-
-### 运行测试（带覆盖率）
-
-```bash
+python -m parq --help
+pytest -m "not performance"
+pytest tests/test_performance.py -m performance -q -s
+ruff check parq tests
+ruff check --fix parq tests
 pytest --cov=parq --cov-report=html
 ```
 
-### 代码格式化和检查
+## 当前状态
 
-```bash
-# 使用 Ruff 检查和自动修复
+已经完成：
 
-ruff check --fix parq tests
+- 元数据与 schema 查看
+- head / tail 预览
+- 行数统计
+- 文件拆分
+- 列统计
+- 格式转换
+- 基于主键的数据对比
+- 兼容文件合并
 
-# 检查可能的无用代码
-vulture parq tests scripts
-```
+后续更适合继续打磨的方向，是更深入的性能优化、更丰富的 diff 工作流，以及更完整的报告能力，而不是再从零补齐这些基础命令。
 
-## 🗺️ 路线图
+## License
 
-- [x] 基础元数据查看
-- [x] Schema 展示
-- [x] 数据预览（head/tail）
-- [x] 行数统计
-- [x] 文件大小和压缩信息显示
-- [x] 嵌套结构智能识别（逻辑列数 vs 物理列数）
-- [x] 添加split命令，将一个parquet文件拆分成多个parquet文件
-- [ ] 数据统计分析
-- [ ] 添加convert命令，将一个parquet文件转换成其他格式（CSV, JSON, Excel）
-- [ ] 添加diff命令，比较两个parquet文件的差异
-- [ ] 添加merge命令，将多个parquet文件合并成一个parquet文件
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-## 📄 许可证
-
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
-## 🙏 致谢
-
-- 灵感来源于 [parquet-cli](https://github.com/chhantyal/parquet-cli)
-- 感谢 Apache Arrow 团队提供强大的 Parquet 支持
-- 感谢 Rich 库为终端输出增添色彩
-
-## 📮 联系方式
-
-- 作者: SimonSun
-- 项目地址: https://github.com/Tendo33/parq-cli
-
----
-
-**⭐ 如果这个项目对你有帮助，请给个 Star！**
+[MIT](LICENSE)

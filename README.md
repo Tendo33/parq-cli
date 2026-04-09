@@ -3,320 +3,298 @@
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A powerful command-line tool for tabular files (`.parquet`, `.csv`, `.xlsx`) 🚀
+A command-line tool for inspecting, transforming, and comparing tabular files.
 
-English | [简体中文](https://github.com/Tendo33/parq-cli/blob/main/README_CN.md)
+[Chinese README](https://github.com/Tendo33/parq-cli/blob/main/README_CN.md)
 
-## ✨ Features
+## Overview
 
-- 📊 **Metadata Viewing**: Quickly view file metadata (row count, column count, file size, etc.)
-- 📋 **Schema Display**: Beautifully display file column structure and data types
-- 👀 **Data Preview**: Support viewing the first N rows or last N rows of a file
-- 🔢 **Row Count**: Quickly get the total number of rows in a file
-- ✂️ **File Splitting**: Split large files into multiple smaller files
-- 🗜️ **Compression Info**: Display file compression type and file size
-- 🎨 **Beautiful Output**: Use Rich library for colorful, formatted terminal output
-- 📦 **Smart Display**: Automatically detect nested structures, showing logical and physical column counts
+`parq` focuses on the workflows that come up most often when working with `.parquet`, `.csv`, and `.xlsx` files:
 
-## 📦 Installation
+- inspect metadata and schema
+- preview the first or last rows
+- count rows
+- split large files
+- compute lightweight column stats
+- convert between supported formats
+- diff two datasets by key
+- merge compatible files
+
+The CLI keeps startup light with lazy imports, preserves `plain` and `json` output modes for automation, and avoids unnecessary full-table materialization for large CSV/XLSX workflows where possible.
+
+## Installation
 
 ```bash
 pip install parq-cli
+```
 
-# Optional: enable .xlsx support
+Enable `.xlsx` support with the optional dependency:
+
+```bash
 pip install "parq-cli[xlsx]"
 ```
 
-## 🚀 Quick Start
-
-### Basic Usage
+## Quick Start
 
 ```bash
-# View file metadata
+# Inspect metadata
 parq meta data.parquet
-parq meta data.csv
-parq meta data.xlsx
+parq meta --fast data.csv
 
-# Display schema information
-parq schema data.parquet
+# Show schema
+parq schema data.xlsx
 
-# Display first 5 rows (default)
+# Preview rows
 parq head data.parquet
+parq head -n 10 --columns id,name data.csv
+parq tail -n 20 data.csv
 
-# Display first 10 rows
-parq head -n 10 data.parquet
-
-# Display last 5 rows (default)
-parq tail data.parquet
-
-# Display last 20 rows
-parq tail -n 20 data.parquet
-
-# Display total row count
+# Count rows
 parq count data.parquet
 
-# Split file into 3 parts
-parq split data.parquet --file-count 3
+# Split files
+parq split data.csv --record-count 100000 -n "chunks/part-%03d.csv"
+parq split data.parquet --file-count 4 -n "chunks/part-%02d.parquet"
 
-# Split file with 1000 records per file
-parq split data.parquet --record-count 1000
+# Column statistics
+parq stats sales.parquet --columns amount,discount --limit 10
+
+# Format conversion
+parq convert raw.xlsx cleaned.parquet
+parq convert source.parquet export.csv --columns id,name,status
+
+# Dataset diff
+parq diff old.parquet new.parquet --key id --columns status,amount
+parq diff left.csv right.csv --key id --summary-only
+
+# Merge compatible inputs
+parq merge part-001.parquet part-002.parquet merged.parquet
 ```
 
-## 📖 Command Reference
+## Supported Formats
 
-### View Metadata
+| Command | Parquet | CSV | XLSX |
+| --- | --- | --- | --- |
+| `meta` | yes | yes | yes |
+| `schema` | yes | yes | yes |
+| `head` / `tail` | yes | yes | yes |
+| `count` | yes | yes | yes |
+| `split` | yes | yes | yes |
+| `stats` | yes | yes | yes |
+| `convert` | yes | yes | yes |
+| `diff` | yes | yes | no, convert first |
+| `merge` | yes | yes | yes |
+
+`XLSX` support requires `openpyxl`.
+
+## Command Reference
+
+### `meta`
 
 ```bash
 parq meta FILE
+parq meta --fast FILE
 ```
 
-Display file metadata (row count, column count, file size, etc.).
-Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
+Shows file-level metadata such as path, format, column count, file size, row-group count, and when available, row count and Parquet-specific metadata.
 
-### View Schema
+Use `--fast` when you want a cheap metadata pass on CSV/XLSX files. In fast mode, expensive fields such as full row counts are skipped.
+
+### `schema`
 
 ```bash
 parq schema FILE
 ```
 
-Display the column structure and data types of a file.
-Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
+Shows column names, types, and nullable information.
 
-### Preview Data
+### `head` and `tail`
 
 ```bash
-# Display first N rows (default 5)
 parq head FILE
-parq head -n N FILE
+parq head -n 20 FILE
+parq head -n 20 --columns id,name FILE
 
-# Display last N rows (default 5)
 parq tail FILE
-parq tail -n N FILE
+parq tail -n 20 FILE
+parq tail -n 20 --columns id,name FILE
 ```
 
 Notes:
-- `N` must be a non-negative integer.
-- If the input file does not exist, parq exits with code `1` and prints a friendly error message.
-- Header-only CSV/XLSX files return an empty preview with the detected columns; an empty CSV with no header returns a friendly `Empty CSV file` error.
-- Supported input formats: `.parquet`, `.csv`, `.xlsx` (xlsx requires `openpyxl`).
 
-### Statistics
+- default preview size is `5`
+- `--columns` accepts a comma-separated list
+- missing files return a friendly error with exit code `1`
+- empty header-only CSV/XLSX files return an empty preview with detected columns
+- an empty csv with no header raises a friendly `Empty CSV file` error
+
+### `count`
 
 ```bash
-# Display total row count
 parq count FILE
 ```
 
-### Split Files
+Returns the total row count.
+
+### `split`
 
 ```bash
-# Split into N files
 parq split FILE --file-count N
-
-# Split with M records per file
-parq split FILE --record-count M
-
-# Custom output format
-parq split FILE -f N -n "output-%03d.parquet"
-
-# Split into subdirectory
-parq split FILE -f 3 -n "output/part-%02d.parquet"
+parq split FILE --record-count N
+parq split FILE --record-count 100000 -n "chunks/part-%03d.parquet"
 ```
 
-Split a source file into multiple smaller files. You can specify either the number of output files (`--file-count`) or the number of records per file (`--record-count`). The output file names are formatted according to the `--name-format` pattern (default: `result-%06d.parquet`).  
-The output format is inferred from the file extension in `--name-format` (for example `.parquet`, `.csv`, `.xlsx`).
-When using `--file-count`, `N` must be a positive integer and cannot exceed the total rows of the source file.
+Splits one input file into multiple output files.
 
-### Global Options
+Rules:
 
-- `--version, -v`: Display version information
-- `--output, -o`: Output format (`rich`, `plain`, `json`)
-- `--help`: Display help information
+- specify exactly one of `--file-count` or `--record-count`
+- output format is inferred from `--name-format`
+- existing target files are not overwritten
+- in `--record-count` mode, CSV/XLSX now stream in a single pass instead of pre-counting the entire file
 
-Output mode notes:
-- `rich` is optimized for human-readable terminal inspection.
-- `plain` is optimized for shell pipelines and escapes embedded tabs/newlines as `\t` and `\n`.
-- `json` is optimized for machine-readable integrations and preserves row values structurally.
-
-## 📁 Large File Notes
-
-- Parquet metadata, `head`, and `tail` use PyArrow metadata and row-group optimizations where possible.
-- CSV preview, count, and split operations stream through the input in batches instead of materializing the full file up front.
-- XLSX preview, count, and split operations process rows incrementally to keep memory usage linear in the requested preview or chunk size.
-- Converting very large tabular files to Parquet still gives the best overall throughput, but large CSV/XLSX files no longer require full-table materialization for preview or split workflows.
-
-## 🎨 Output Examples
-
-### Metadata Display
-
-**Regular File (No Nested Structure):**
+### `stats`
 
 ```bash
-$ parq meta data.parquet
+parq stats FILE
+parq stats FILE --columns amount,discount
+parq stats FILE --limit 20
 ```
 
-```
-╭─────────────────────── 📊 Parquet File Metadata ───────────────────────╮
-│ file_path: data.parquet                                                │
-│ num_rows: 1000                                                         │
-│ num_columns: 5 (logical)                                               │
-│ file_size: 123.45 KB                                                   │
-│ compression: SNAPPY                                                    │
-│ num_row_groups: 1                                                      │
-│ format_version: 2.6                                                    │
-│ serialized_size: 126412                                                │
-│ created_by: parquet-cpp-arrow version 18.0.0                          │
-╰────────────────────────────────────────────────────────────────────────╯
-```
+Computes simple per-column statistics.
 
-**Nested Structure File (Shows Physical Column Count):**
+- numeric columns include `count`, `null_count`, `min`, `max`, `mean`
+- non-numeric columns include `count` and `null_count`
+- default `--limit` is `50` to avoid flooding the terminal on very wide tables
+
+### `convert`
 
 ```bash
-$ parq meta nested.parquet
+parq convert SOURCE OUTPUT
+parq convert SOURCE OUTPUT --columns id,name,status
 ```
 
-```
-╭─────────────────────── 📊 Parquet File Metadata ───────────────────────╮
-│ file_path: nested.parquet                                              │
-│ num_rows: 500                                                          │
-│ num_columns: 3 (logical)                                               │
-│ num_physical_columns: 8 (storage)                                      │
-│ file_size: 2.34 MB                                                     │
-│ compression: ZSTD                                                      │
-│ num_row_groups: 2                                                      │
-│ format_version: 2.6                                                    │
-│ serialized_size: 2451789                                               │
-│ created_by: parquet-cpp-arrow version 21.0.0                          │
-╰────────────────────────────────────────────────────────────────────────╯
-```
+Converts a supported input file to another supported output format. The output format is determined by the `OUTPUT` suffix.
 
 Notes:
-- `compression` may show one codec (for example `SNAPPY`) or multiple codecs joined by commas when mixed compression exists.
 
-### Schema Display
+- current targets are `.parquet`, `.csv`, and `.xlsx`
+- conversion is streaming-based where possible
+- existing output files raise an error instead of being overwritten
 
-```bash
-$ parq schema data.parquet
-```
-
-```
-                    📋 Schema Information
-┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Column Name ┃ Data Type     ┃ Nullable ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ id          │ int64         │ ✗        │
-│ name        │ string        │ ✓        │
-│ age         │ int64         │ ✓        │
-│ city        │ string        │ ✓        │
-│ salary      │ double        │ ✓        │
-└─────────────┴───────────────┴──────────┘
-```
-
-## 🛠️ Tech Stack
-
-- **[PyArrow](https://arrow.apache.org/docs/python/)**: High-performance Parquet reading engine
-- **[Typer](https://typer.tiangolo.com/)**: Modern CLI framework
-- **[Rich](https://rich.readthedocs.io/)**: Beautiful terminal output
-
-## 🧪 Development
-
-### Install Development Dependencies
+### `diff`
 
 ```bash
-# Recommended with uv
+parq diff LEFT RIGHT --key id
+parq diff LEFT RIGHT --key id1,id2 --columns status,amount
+parq diff LEFT RIGHT --key id --summary-only
+```
+
+Compares two datasets by key and reports:
+
+- row count delta
+- rows only present on the left
+- rows only present on the right
+- changed rows for the selected columns
+- schema-only columns and same-name type mismatches
+
+Notes:
+
+- `--key` is required
+- `diff` currently supports Parquet and CSV inputs
+- XLSX files should be converted first
+- duplicate keys on either side are treated as an error
+- `--summary-only` keeps the counts and omits sample payloads
+
+### `merge`
+
+```bash
+parq merge INPUT1 INPUT2 OUTPUT
+parq merge chunks/*.parquet merged.parquet
+```
+
+Merges multiple compatible input files into a single output file. The last positional argument is the output path.
+
+Notes:
+
+- schemas must be identical or safely unifiable by Arrow
+- existing output files are not overwritten
+- output format is inferred from the output suffix
+
+## Output Modes
+
+Global options:
+
+- `--version`, `-v`: show version information
+- `--output`, `-o`: select output format
+- `--help`: show command help
+
+Available output modes:
+
+- `rich`: human-friendly terminal rendering
+- `plain`: low-overhead tabular output for shell pipelines
+- `json`: machine-readable structured output
+
+Examples:
+
+```bash
+parq meta data.parquet --output json
+parq stats data.csv --output plain
+parq diff left.parquet right.parquet --key id --summary-only --output json
+```
+
+On Windows terminals that cannot safely render emoji or extended characters, Rich headings automatically fall back to a safe plain style instead of crashing.
+
+## Large File Notes
+
+- Parquet metadata, row counts, and previews use Arrow metadata and row-group shortcuts where available.
+- CSV `tail` uses a fixed-size column window instead of materializing every row as Python dicts.
+- CSV/XLSX `split --record-count` streams in one pass.
+- `meta --fast` is the best option when you need quick metadata from large CSV/XLSX inputs.
+- XLSX schema inference samples the first 1000 rows instead of scanning the entire sheet up front.
+
+For repeated heavy workflows, converting large CSV/XLSX files to Parquet is still the best path for throughput.
+
+## Development
+
+Install development dependencies:
+
+```bash
 uv sync --extra dev
+```
 
-# Or with pip
+or:
+
+```bash
 pip install -e ".[dev]"
 ```
 
-### Run Tests
+Useful commands:
 
 ```bash
-pytest
-```
-
-### Run Tests (With Coverage)
-
-```bash
+python -m parq --help
+pytest -m "not performance"
+pytest tests/test_performance.py -m performance -q -s
+ruff check parq tests
+ruff check --fix parq tests
 pytest --cov=parq --cov-report=html
 ```
 
-### Code Formatting and Checking
+## Status
 
-```bash
-# Check and auto-fix with Ruff
+Implemented:
 
-ruff check --fix parq tests
+- metadata and schema inspection
+- head and tail preview
+- row counting
+- file splitting
+- column statistics
+- format conversion
+- keyed dataset diff
+- compatible file merge
 
-# Find dead code
-vulture parq tests scripts
-```
+Planned improvements are now centered on deeper performance tuning, richer diff workflows, and broader reporting capabilities rather than adding the core commands from scratch.
 
-## 🗺️ Roadmap
+## License
 
-- [x] Basic metadata viewing
-- [x] Schema display
-- [x] Data preview (head/tail)
-- [x] Row count statistics
-- [x] File size and compression information display
-- [x] Nested structure smart detection (logical vs physical column count)
-- [x] Add split command, split a parquet file into multiple parquet files
-- [ ] Data statistical analysis
-- [ ] Add convert command, convert a parquet file to other formats (CSV, JSON, Excel)
-- [ ] Add diff command, compare the differences between two parquet files
-- [ ] Add merge command, merge multiple parquet files into one parquet file
-
-## 📦 Release Process (for maintainers)
-
-We use automated scripts to manage versions and releases:
-
-```bash
-# Bump version and create tag
-python scripts/bump_version.py patch  # 0.1.0 -> 0.1.1 (bug fixes)
-python scripts/bump_version.py minor  # 0.1.0 -> 0.2.0 (new features)
-python scripts/bump_version.py major  # 0.1.0 -> 1.0.0 (breaking changes)
-
-# Push to trigger GitHub Actions
-git push origin main
-git push origin v0.1.1  # Replace with actual version
-```
-
-GitHub Actions will automatically:
-- ✅ Run tests on Linux/macOS/Windows before publishing
-- ✅ Check for version conflicts
-- ✅ Fail fast on network errors while checking PyPI versions
-- ✅ Build the package
-- ✅ Publish to PyPI
-- ✅ Create GitHub Release
-
-See [scripts/README.md](scripts/README.md) for detailed documentation.
-
-## 🤝 Contributing
-
-Issues and Pull Requests are welcome!
-
-1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
-
-## 🙏 Acknowledgments
-
-- Inspired by [parquet-cli](https://github.com/chhantyal/parquet-cli)
-- Thanks to the Apache Arrow team for powerful Parquet support
-- Thanks to the Rich library for adding color to terminal output
-
-## 📮 Contact
-
-- Author: SimonSun
-- Project URL: https://github.com/Tendo33/parq-cli
-
----
-
-**⭐ If this project helps you, please give it a Star!**
+[MIT](LICENSE)
