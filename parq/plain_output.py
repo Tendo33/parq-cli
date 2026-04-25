@@ -78,8 +78,11 @@ class PlainOutputFormatter:
     @staticmethod
     def print_stats(stats_rows: List[Dict[str, Any]]) -> None:
         writer = PlainOutputFormatter._writer()
-        writer.writerow(["name", "type", "count", "null_count", "min", "max", "mean"])
+        writer.writerow(["name", "type", "count", "null_count", "min", "max", "mean", "cardinality", "top_values"])
         for row in stats_rows:
+            import json as _json
+            top_values = row.get("top_values")
+            top_str = _json.dumps(top_values) if top_values else ""
             writer.writerow(
                 [
                     PlainOutputFormatter._normalize_value(row["name"]),
@@ -89,6 +92,8 @@ class PlainOutputFormatter:
                     PlainOutputFormatter._normalize_value(row["min"]),
                     PlainOutputFormatter._normalize_value(row["max"]),
                     PlainOutputFormatter._normalize_value(row["mean"]),
+                    PlainOutputFormatter._normalize_value(row.get("cardinality")),
+                    top_str,
                 ]
             )
 

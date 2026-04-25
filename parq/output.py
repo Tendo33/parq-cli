@@ -156,10 +156,17 @@ class OutputFormatter:
             show_header=True,
             header_style="bold magenta",
         )
-        for column in ["name", "type", "count", "null_count", "min", "max", "mean"]:
+        for column in ["name", "type", "count", "null_count", "min", "max", "mean", "cardinality", "top values"]:
             table.add_column(column, style="cyan" if column == "name" else None)
 
         for row in stats_rows:
+            top_values = row.get("top_values")
+            top_str = ""
+            if top_values:
+                top_str = ", ".join(
+                    f"{item['value']}({item['count']})" for item in top_values
+                )
+            cardinality = row.get("cardinality")
             table.add_row(
                 str(row["name"]),
                 str(row["type"]),
@@ -168,6 +175,8 @@ class OutputFormatter:
                 "" if row["min"] is None else str(row["min"]),
                 "" if row["max"] is None else str(row["max"]),
                 "" if row["mean"] is None else str(row["mean"]),
+                "" if cardinality is None else str(cardinality),
+                top_str,
             )
 
         console.print(table)

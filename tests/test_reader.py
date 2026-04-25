@@ -347,7 +347,7 @@ class TestParquetReader:
             def close(self):
                 return None
 
-        monkeypatch.setattr("parq.reader.pq.ParquetWriter", FailingWriter)
+        monkeypatch.setattr("parq.formats._chunk_writers.pq.ParquetWriter", FailingWriter)
 
         with pytest.raises(OSError, match="simulated write failure"):
             reader.split_file(output_pattern=output_pattern, file_count=2)
@@ -378,7 +378,7 @@ class TestMultiFormatReader:
             del args, kwargs
             raise AssertionError("csv initialized eagerly")
 
-        monkeypatch.setattr("parq.reader.pacsv.read_csv", fail_read_csv)
+        monkeypatch.setattr("parq.formats._csv.pacsv.read_csv", fail_read_csv)
 
         reader = MultiFormatReader(str(sample_csv_file))
         assert reader.file_path == sample_csv_file
@@ -478,8 +478,8 @@ class TestMultiFormatReader:
             del args, kwargs
             raise AssertionError("csv count used read_csv")
 
-        monkeypatch.setattr("parq.reader.pacsv.open_csv", wrapped_open_csv)
-        monkeypatch.setattr("parq.reader.pacsv.read_csv", fail_read_csv)
+        monkeypatch.setattr("parq.formats._csv.pacsv.open_csv", wrapped_open_csv)
+        monkeypatch.setattr("parq.formats._csv.pacsv.read_csv", fail_read_csv)
 
         reader = MultiFormatReader(str(sample_csv_file))
         assert reader.num_rows == 5
@@ -660,7 +660,7 @@ class TestMultiFormatReader:
         self, sample_csv_file, tmp_path, monkeypatch
     ):
         """Test non-parquet split cleanup also removes partially-created failed output file."""
-        import parq.reader as reader_mod
+        import parq.formats._chunk_writers as chunk_writers_mod
 
         class FailingWriter:
             def __init__(self, output_path):
@@ -679,7 +679,7 @@ class TestMultiFormatReader:
             del schema, compression
             return FailingWriter(output_path)
 
-        monkeypatch.setattr(reader_mod, "_open_chunk_writer", failing_open_writer)
+        monkeypatch.setattr(chunk_writers_mod, "_open_chunk_writer", failing_open_writer)
 
         reader = MultiFormatReader(str(sample_csv_file))
         output_pattern = str(tmp_path / "split-%02d.csv")

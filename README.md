@@ -9,13 +9,13 @@ A command-line tool for inspecting, transforming, and comparing tabular files.
 
 ## Overview
 
-`parq` focuses on the workflows that come up most often when working with `.parquet`, `.csv`, and `.xlsx` files:
+`parq` focuses on the workflows that come up most often when working with `.parquet`, `.csv`, `.tsv`, and `.xlsx` files:
 
 - inspect metadata and schema
 - preview the first or last rows
 - count rows
 - split large files
-- compute lightweight column stats
+- compute lightweight column stats (with cardinality and top-values for string columns)
 - convert between supported formats
 - diff two datasets by key
 - merge compatible files
@@ -55,37 +55,49 @@ parq count data.parquet
 # Split files
 parq split data.csv --record-count 100000 -n "chunks/part-%03d.csv"
 parq split data.parquet --file-count 4 -n "chunks/part-%02d.parquet"
+parq split data.csv --record-count 100000 -n "out/part-%03d.csv" --force   # overwrite existing
 
-# Column statistics
-parq stats sales.parquet --columns amount,discount --limit 10
+# Column statistics (string columns include cardinality and top values)
+parq stats sales.parquet --columns amount,category --limit 10
+parq stats sales.parquet --columns category --top-n 10    # show top 10 most frequent values
 
-# Format conversion
+# Format conversion (with live progress bar)
 parq convert raw.xlsx cleaned.parquet
 parq convert source.parquet export.csv --columns id,name,status
+parq convert source.parquet export.csv --force             # overwrite if exists
+
+# Read TSV files or use a custom delimiter
+parq head data.tsv
+parq head --delimiter ";" data.csv
+
+# Read a specific XLSX sheet
+parq head --sheet Sheet2 report.xlsx
+parq head --sheet 1 report.xlsx                            # 0-based index
 
 # Dataset diff
 parq diff old.parquet new.parquet --key id --columns status,amount
 parq diff left.csv right.csv --key id --summary-only
 
-# Merge compatible inputs
+# Merge compatible inputs (with live progress bar)
 parq merge part-001.parquet part-002.parquet merged.parquet
+parq merge chunks/*.parquet merged.parquet --force         # overwrite if exists
 ```
 
 ## Supported Formats
 
-| Command | Parquet | CSV | XLSX |
-| --- | --- | --- | --- |
-| `meta` | yes | yes | yes |
-| `schema` | yes | yes | yes |
-| `head` / `tail` | yes | yes | yes |
-| `count` | yes | yes | yes |
-| `split` | yes | yes | yes |
-| `stats` | yes | yes | yes |
-| `convert` | yes | yes | yes |
-| `diff` | yes | yes | no, convert first |
-| `merge` | yes | yes | yes |
+| Command | Parquet | CSV | TSV | XLSX |
+| --- | --- | --- | --- | --- |
+| `meta` | yes | yes | yes | yes |
+| `schema` | yes | yes | yes | yes |
+| `head` / `tail` | yes | yes | yes | yes |
+| `count` | yes | yes | yes | yes |
+| `split` | yes | yes | yes | yes |
+| `stats` | yes | yes | yes | yes |
+| `convert` | yes | yes | yes | yes |
+| `diff` | yes | yes | yes | no, convert first |
+| `merge` | yes | yes | yes | yes |
 
-`XLSX` support requires `openpyxl`.
+`XLSX` support requires `openpyxl`. TSV files are auto-detected by the `.tsv` extension; a custom delimiter can be supplied with `--delimiter`.
 
 ## Command Reference
 
@@ -142,6 +154,7 @@ Returns the total row count.
 parq split FILE --file-count N
 parq split FILE --record-count N
 parq split FILE --record-count 100000 -n "chunks/part-%03d.parquet"
+parq split FILE --record-count 100000 -n "chunks/part-%03d.csv" --force
 ```
 
 Splits one input file into multiple output files.
@@ -150,21 +163,24 @@ Rules:
 
 - specify exactly one of `--file-count` or `--record-count`
 - output format is inferred from `--name-format`
-- existing target files are not overwritten
+- by default, existing target files raise an error; use `--force` / `-F` to overwrite
 - in `--record-count` mode, CSV/XLSX now stream in a single pass instead of pre-counting the entire file
+- a live progress bar is shown during the split
 
 ### `stats`
 
 ```bash
 parq stats FILE
-parq stats FILE --columns amount,discount
+parq stats FILE --columns amount,category
 parq stats FILE --limit 20
+parq stats FILE --columns category --top-n 10
 ```
 
 Computes simple per-column statistics.
 
 - numeric columns include `count`, `null_count`, `min`, `max`, `mean`
-- non-numeric columns include `count` and `null_count`
+- string, boolean, and date columns additionally include `cardinality` and `top_values` (top N most frequent values with their occurrence counts)
+- default `--top-n` is `5`; set to `0` to suppress top-values output entirely
 - default `--limit` is `50` to avoid flooding the terminal on very wide tables
 
 ### `convert`
@@ -172,15 +188,17 @@ Computes simple per-column statistics.
 ```bash
 parq convert SOURCE OUTPUT
 parq convert SOURCE OUTPUT --columns id,name,status
+parq convert SOURCE OUTPUT --force
 ```
 
 Converts a supported input file to another supported output format. The output format is determined by the `OUTPUT` suffix.
 
 Notes:
 
-- current targets are `.parquet`, `.csv`, and `.xlsx`
+- current targets are `.parquet`, `.csv`, `.tsv`, and `.xlsx`
 - conversion is streaming-based where possible
-- existing output files raise an error instead of being overwritten
+- a live progress bar is shown during the conversion
+- by default, existing output files raise an error; use `--force` / `-F` to overwrite
 
 ### `diff`
 
@@ -211,6 +229,7 @@ Notes:
 ```bash
 parq merge INPUT1 INPUT2 OUTPUT
 parq merge chunks/*.parquet merged.parquet
+parq merge chunks/*.parquet merged.parquet --force
 ```
 
 Merges multiple compatible input files into a single output file. The last positional argument is the output path.
@@ -218,15 +237,18 @@ Merges multiple compatible input files into a single output file. The last posit
 Notes:
 
 - schemas must be identical or safely unifiable by Arrow
-- existing output files are not overwritten
+- by default, existing output files raise an error; use `--force` / `-F` to overwrite
 - output format is inferred from the output suffix
+- a live progress bar is shown during the merge
 
 ## Output Modes
 
 Global options:
 
 - `--version`, `-v`: show version information
-- `--output`, `-o`: select output format
+- `--output`, `-o`: select output format (`rich` | `plain` | `json`)
+- `--delimiter`, `-d`: field delimiter for CSV/TSV input (default: `,`); `.tsv` files default to `\t` automatically
+- `--sheet`: XLSX sheet name or 0-based index to read (default: active sheet)
 - `--help`: show command help
 
 Available output modes:
@@ -239,7 +261,9 @@ Examples:
 
 ```bash
 parq meta data.parquet --output json
-parq stats data.csv --output plain
+parq --output plain stats data.csv
+parq --delimiter ";" head semicolon_data.csv
+parq --sheet "Sales" head report.xlsx
 parq diff left.parquet right.parquet --key id --summary-only --output json
 ```
 
@@ -287,11 +311,13 @@ Implemented:
 - metadata and schema inspection
 - head and tail preview
 - row counting
-- file splitting
-- column statistics
-- format conversion
+- file splitting (with progress bar, `--force` overwrite)
+- column statistics (numeric + string cardinality/top-values, `--top-n`)
+- format conversion (with progress bar, `--force` overwrite)
 - keyed dataset diff
-- compatible file merge
+- compatible file merge (with progress bar, `--force` overwrite)
+- TSV auto-detection and custom delimiter support (`--delimiter`)
+- XLSX multi-sheet selection (`--sheet`)
 
 Planned improvements are now centered on deeper performance tuning, richer diff workflows, and broader reporting capabilities rather than adding the core commands from scratch.
 

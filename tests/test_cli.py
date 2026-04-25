@@ -387,7 +387,7 @@ class TestCLI:
         """Stats command should report column summaries in plain mode."""
         result = runner.invoke(app, ["--output", "plain", "stats", str(sample_parquet_file)])
         assert result.exit_code == 0
-        assert result.output.splitlines()[0] == "name\ttype\tcount\tnull_count\tmin\tmax\tmean"
+        assert result.output.splitlines()[0] == "name\ttype\tcount\tnull_count\tmin\tmax\tmean\tcardinality\ttop_values"
         assert "salary" in result.output
 
     def test_cli_convert_csv_to_parquet(self, sample_csv_file, tmp_path):
@@ -451,3 +451,171 @@ class TestCLI:
         result = runner.invoke(app, ["merge", str(left), str(right), str(output_path)])
         assert result.exit_code == 0
         assert pacsv.read_csv(output_path).num_rows == 3
+
+    # ------------------------------------------------------------------
+    # A1: --force overwrite tests
+    # ------------------------------------------------------------------
+
+    def test_convert_force_overwrites_existing(self, sample_csv_file, tmp_path):
+        """convert --force should overwrite an existing output file."""
+        output_path = tmp_path / "out.parquet"
+        output_path.write_bytes(b"dummy")
+
+        result = runner.invoke(app, ["convert", str(sample_csv_file), str(output_path)])
+        assert result.exit_code == 1
+        assert "already exists" in result.output.lower()
+
+        result = runner.invoke(app, ["convert", "--force", str(sample_csv_file), str(output_path)])
+        assert result.exit_code == 0
+        assert output_path.stat().st_size > 10
+
+    def test_split_force_overwrites_existing(self, sample_parquet_file, tmp_path):
+        """split --force should overwrite existing output files."""
+        existing = tmp_path / "result-000000.parquet"
+        existing.write_bytes(b"dummy")
+
+        result = runner.invoke(
+            app,
+            ["split", str(sample_parquet_file), "--file-count", "2",
+             "--name-format", str(tmp_path / "result-%06d.parquet")],
+        )
+        assert result.exit_code == 1
+
+        result = runner.invoke(
+            app,
+            ["split", "--force", str(sample_parquet_file), "--file-count", "2",
+             "--name-format", str(tmp_path / "result-%06d.parquet")],
+        )
+        assert result.exit_code == 0
+
+    def test_merge_force_overwrites_existing(self, tmp_path):
+        """merge --force should overwrite an existing output file."""
+        left = tmp_path / "a.csv"
+        right = tmp_path / "b.csv"
+        output_path = tmp_path / "merged.csv"
+        pacsv.write_csv(pa.table({"id": [1]}), left)
+        pacsv.write_csv(pa.table({"id": [2]}), right)
+        output_path.write_bytes(b"dummy")
+
+        result = runner.invoke(app, ["merge", str(left), str(right), str(output_path)])
+        assert result.exit_code == 1
+
+        result = runner.invoke(app, ["merge", "--force", str(left), str(right), str(output_path)])
+        assert result.exit_code == 0
+        assert pacsv.read_csv(output_path).num_rows == 2
+
+    # ------------------------------------------------------------------
+    # A3: stats cardinality + top_values
+    # ------------------------------------------------------------------
+
+    def test_stats_string_column_cardinality(self, sample_parquet_file):
+        """stats --output json should include cardinality and top_values for string columns."""
+        import json
+        result = runner.invoke(app, ["--output", "json", "stats", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        name_col = next(c for c in data["columns"] if c["name"] == "name")
+        assert name_col["cardinality"] == 5
+        assert isinstance(name_col["top_values"], list)
+        assert len(name_col["top_values"]) > 0
+
+    def test_stats_numeric_column_has_no_top_values(self, sample_parquet_file):
+        """Numeric columns should have min/max/mean but no top_values."""
+        import json
+        result = runner.invoke(app, ["--output", "json", "stats", str(sample_parquet_file)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        salary_col = next(c for c in data["columns"] if c["name"] == "salary")
+        assert salary_col["min"] is not None
+        assert salary_col["top_values"] is None
+
+    def test_stats_top_n_option(self, sample_parquet_file):
+        """--top-n should limit the returned top values list."""
+        import json
+        result = runner.invoke(
+            app, ["--output", "json", "stats", "--top-n", "2", str(sample_parquet_file)]
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        name_col = next(c for c in data["columns"] if c["name"] == "name")
+        assert len(name_col["top_values"]) <= 2
+
+    # ------------------------------------------------------------------
+    # A4: CSV delimiter + TSV auto-detection
+    # ------------------------------------------------------------------
+
+    def test_head_tsv_file(self, tmp_path):
+        """head should read .tsv files automatically with tab delimiter."""
+        tsv_file = tmp_path / "sample.tsv"
+        tsv_file.write_text("id\tname\n1\talice\n2\tbob\n", encoding="utf-8")
+        result = runner.invoke(app, ["head", str(tsv_file)])
+        assert result.exit_code == 0
+        assert "alice" in result.output
+
+    def test_head_csv_custom_delimiter(self, tmp_path):
+        """head --delimiter should parse pipe-separated files correctly."""
+        pipe_file = tmp_path / "data.csv"
+        pipe_file.write_text("id|name\n1|alice\n2|bob\n", encoding="utf-8")
+        result = runner.invoke(app, ["--delimiter", "|", "head", str(pipe_file)])
+        assert result.exit_code == 0
+        assert "alice" in result.output
+
+    def test_schema_tsv_file(self, tmp_path):
+        """schema command should work on .tsv files."""
+        tsv_file = tmp_path / "sample.tsv"
+        tsv_file.write_text("x\ty\n1\t2\n", encoding="utf-8")
+        result = runner.invoke(app, ["schema", str(tsv_file)])
+        assert result.exit_code == 0
+        assert "x" in result.output
+
+    # ------------------------------------------------------------------
+    # A5: XLSX multi-sheet support
+    # ------------------------------------------------------------------
+
+    def test_xlsx_sheet_by_name(self, tmp_path):
+        """head --sheet should read a named XLSX sheet."""
+        openpyxl = pytest.importorskip("openpyxl")
+        xlsx_file = tmp_path / "multi.xlsx"
+        wb = openpyxl.Workbook()
+        ws1 = wb.active
+        ws1.title = "Sheet1"
+        ws1.append(["id", "val"])
+        ws1.append([1, "first"])
+        ws2 = wb.create_sheet("Sheet2")
+        ws2.append(["id", "val"])
+        ws2.append([2, "second"])
+        wb.save(xlsx_file)
+
+        result = runner.invoke(app, ["--sheet", "Sheet2", "head", str(xlsx_file)])
+        assert result.exit_code == 0
+        assert "second" in result.output
+        assert "first" not in result.output
+
+    def test_xlsx_sheet_by_index(self, tmp_path):
+        """--sheet with a numeric string should select sheet by 0-based index."""
+        openpyxl = pytest.importorskip("openpyxl")
+        xlsx_file = tmp_path / "multi.xlsx"
+        wb = openpyxl.Workbook()
+        ws1 = wb.active
+        ws1.append(["col"])
+        ws1.append(["zero"])
+        ws2 = wb.create_sheet()
+        ws2.append(["col"])
+        ws2.append(["one"])
+        wb.save(xlsx_file)
+
+        result = runner.invoke(app, ["--sheet", "1", "head", str(xlsx_file)])
+        assert result.exit_code == 0
+        assert "one" in result.output
+
+    def test_xlsx_sheet_invalid_name(self, tmp_path):
+        """Specifying a non-existent sheet name should return exit code 1."""
+        openpyxl = pytest.importorskip("openpyxl")
+        xlsx_file = tmp_path / "simple.xlsx"
+        wb = openpyxl.Workbook()
+        wb.active.append(["col"])
+        wb.save(xlsx_file)
+
+        result = runner.invoke(app, ["--sheet", "NoSuchSheet", "head", str(xlsx_file)])
+        assert result.exit_code == 1
+
