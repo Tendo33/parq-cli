@@ -1,6 +1,6 @@
 [project]
 name = "parq-cli"
-version = "0.1.9"
+version = "0.2.0"
 description = "A powerful command-line tool for inspecting tabular files like Parquet, CSV, and XLSX"
 readme = "README.md"
 requires-python = ">=3.9"
