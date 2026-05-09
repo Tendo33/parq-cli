@@ -34,6 +34,10 @@ Enable `.xlsx` support with the optional dependency:
 pip install "parq-cli[xlsx]"
 ```
 
+## AI Collaboration
+
+Project facts for AI-assisted development live in `.trellis/spec/`. Start with `.trellis/spec/README.md`, then read `.trellis/spec/backend/index.md` and `.trellis/spec/shared/verification.md` before changing CLI commands, readers, format modules, output contracts, scripts, or release workflows.
+
 ## Quick Start
 
 ```bash
