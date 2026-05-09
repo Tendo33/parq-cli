@@ -378,7 +378,13 @@ def convert(
         reader = _get_reader(str(source), state)
 
         if state.output_format == OutputFormat.RICH:
-            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
+            from rich.progress import (
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                BarColumn,
+                TimeRemainingColumn,
+            )
             from parq.output import console
 
             total_rows_hint = reader.num_rows if reader.input_format == "parquet" else 0
@@ -402,12 +408,16 @@ def convert(
                     progress.update(task, completed=current)
 
                 total_rows = reader.convert_file(
-                    output, columns=_parse_column_list(columns), force=force,
+                    output,
+                    columns=_parse_column_list(columns),
+                    force=force,
                     progress_callback=update_progress,
                 )
         else:
             total_rows = reader.convert_file(
-                output, columns=_parse_column_list(columns), force=force,
+                output,
+                columns=_parse_column_list(columns),
+                force=force,
             )
 
         formatter.print_convert_result(source, output, total_rows, time.time() - start_time)
@@ -484,7 +494,13 @@ def merge(
 
         state = _get_state(ctx)
         if state.output_format == OutputFormat.RICH:
-            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
+            from rich.progress import (
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                BarColumn,
+                TimeRemainingColumn,
+            )
             from parq.output import console
 
             with Progress(
@@ -495,9 +511,7 @@ def merge(
                 TimeRemainingColumn(),
                 console=console,
             ) as progress:
-                task = progress.add_task(
-                    f"[cyan]Merging {len(input_files)} file(s)...", total=None
-                )
+                task = progress.add_task(f"[cyan]Merging {len(input_files)} file(s)...", total=None)
 
                 def update_progress(current: int, total: int) -> None:
                     if progress.tasks[task].total is None and total:

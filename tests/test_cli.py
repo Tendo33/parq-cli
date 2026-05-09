@@ -153,6 +153,7 @@ class TestCLI:
     def test_cli_count_json(self, sample_parquet_file):
         """Test count with --output json."""
         import json
+
         result = runner.invoke(app, ["--output", "json", "count", str(sample_parquet_file)])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -183,6 +184,7 @@ class TestCLI:
     def test_cli_head_json(self, sample_parquet_file):
         """Test head with --output json."""
         import json
+
         result = runner.invoke(app, ["-o", "json", "head", "-n", "2", str(sample_parquet_file)])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -241,7 +243,14 @@ class TestCLI:
         output_pattern = str(tmp_path / "xlsx-split-%02d.parquet")
         result = runner.invoke(
             app,
-            ["split", str(sample_xlsx_file), "--record-count", "2", "--name-format", output_pattern],
+            [
+                "split",
+                str(sample_xlsx_file),
+                "--record-count",
+                "2",
+                "--name-format",
+                output_pattern,
+            ],
         )
         assert result.exit_code == 0
         assert (tmp_path / "xlsx-split-00.parquet").exists()
@@ -252,10 +261,19 @@ class TestCLI:
         output_pattern = str(tmp_path / "parquet-split-%02d.csv")
         result = runner.invoke(
             app,
-            ["split", str(sample_parquet_file), "--record-count", "2", "--name-format", output_pattern],
+            [
+                "split",
+                str(sample_parquet_file),
+                "--record-count",
+                "2",
+                "--name-format",
+                output_pattern,
+            ],
         )
         assert result.exit_code == 0
-        row_counts = [pacsv.read_csv(tmp_path / f"parquet-split-{i:02d}.csv").num_rows for i in range(3)]
+        row_counts = [
+            pacsv.read_csv(tmp_path / f"parquet-split-{i:02d}.csv").num_rows for i in range(3)
+        ]
         assert row_counts == [2, 2, 1]
 
     @pytest.mark.parametrize("command", ["meta", "schema", "head", "tail", "count"])
@@ -387,7 +405,10 @@ class TestCLI:
         """Stats command should report column summaries in plain mode."""
         result = runner.invoke(app, ["--output", "plain", "stats", str(sample_parquet_file)])
         assert result.exit_code == 0
-        assert result.output.splitlines()[0] == "name\ttype\tcount\tnull_count\tmin\tmax\tmean\tcardinality\ttop_values"
+        assert (
+            result.output.splitlines()[0]
+            == "name\ttype\tcount\tnull_count\tmin\tmax\tmean\tcardinality\ttop_values"
+        )
         assert "salary" in result.output
 
     def test_cli_convert_csv_to_parquet(self, sample_csv_file, tmp_path):
@@ -411,7 +432,9 @@ class TestCLI:
             right,
         )
 
-        result = runner.invoke(app, ["--output", "json", "diff", str(left), str(right), "--key", "id"])
+        result = runner.invoke(
+            app, ["--output", "json", "diff", str(left), str(right), "--key", "id"]
+        )
         assert result.exit_code == 0
         data = __import__("json").loads(result.output)
         assert data["row_count_delta"] == 0
@@ -476,15 +499,28 @@ class TestCLI:
 
         result = runner.invoke(
             app,
-            ["split", str(sample_parquet_file), "--file-count", "2",
-             "--name-format", str(tmp_path / "result-%06d.parquet")],
+            [
+                "split",
+                str(sample_parquet_file),
+                "--file-count",
+                "2",
+                "--name-format",
+                str(tmp_path / "result-%06d.parquet"),
+            ],
         )
         assert result.exit_code == 1
 
         result = runner.invoke(
             app,
-            ["split", "--force", str(sample_parquet_file), "--file-count", "2",
-             "--name-format", str(tmp_path / "result-%06d.parquet")],
+            [
+                "split",
+                "--force",
+                str(sample_parquet_file),
+                "--file-count",
+                "2",
+                "--name-format",
+                str(tmp_path / "result-%06d.parquet"),
+            ],
         )
         assert result.exit_code == 0
 
@@ -511,6 +547,7 @@ class TestCLI:
     def test_stats_string_column_cardinality(self, sample_parquet_file):
         """stats --output json should include cardinality and top_values for string columns."""
         import json
+
         result = runner.invoke(app, ["--output", "json", "stats", str(sample_parquet_file)])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -522,6 +559,7 @@ class TestCLI:
     def test_stats_numeric_column_has_no_top_values(self, sample_parquet_file):
         """Numeric columns should have min/max/mean but no top_values."""
         import json
+
         result = runner.invoke(app, ["--output", "json", "stats", str(sample_parquet_file)])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -532,6 +570,7 @@ class TestCLI:
     def test_stats_top_n_option(self, sample_parquet_file):
         """--top-n should limit the returned top values list."""
         import json
+
         result = runner.invoke(
             app, ["--output", "json", "stats", "--top-n", "2", str(sample_parquet_file)]
         )
@@ -618,4 +657,3 @@ class TestCLI:
 
         result = runner.invoke(app, ["--sheet", "NoSuchSheet", "head", str(xlsx_file)])
         assert result.exit_code == 1
-

@@ -365,8 +365,15 @@ class MultiFormatReader:
             )
         )
         return self._split_generic_file_count(
-            schema, batches, total_rows, output_pattern,
-            file_count, record_count, progress_callback, compression, force,
+            schema,
+            batches,
+            total_rows,
+            output_pattern,
+            file_count,
+            record_count,
+            progress_callback,
+            compression,
+            force,
         )
 
     def convert_file(
@@ -572,22 +579,14 @@ def diff_files(
         "only_right_count": only_right_count,
         "changed_count": changed_count,
         "schema_only_left": (
-            []
-            if summary_only
-            else [{"column": name} for name in schema_only_left[:limit]]
+            [] if summary_only else [{"column": name} for name in schema_only_left[:limit]]
         ),
         "schema_only_right": (
-            []
-            if summary_only
-            else [{"column": name} for name in schema_only_right[:limit]]
+            [] if summary_only else [{"column": name} for name in schema_only_right[:limit]]
         ),
         "schema_type_mismatches": [] if summary_only else schema_type_mismatches[:limit],
-        "only_left": [
-            {"key": key if len(key) > 1 else key[0]} for key in only_left_keys[:limit]
-        ],
-        "only_right": [
-            {"key": key if len(key) > 1 else key[0]} for key in only_right_keys[:limit]
-        ],
+        "only_left": [{"key": key if len(key) > 1 else key[0]} for key in only_left_keys[:limit]],
+        "only_right": [{"key": key if len(key) > 1 else key[0]} for key in only_right_keys[:limit]],
         "changed_rows": [] if summary_only else changed_rows[:limit],
     }
 

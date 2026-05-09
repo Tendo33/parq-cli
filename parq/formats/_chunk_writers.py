@@ -88,9 +88,7 @@ def _open_chunk_writer(
     raise ValueError(f"Unsupported output file format: {suffix or '<none>'}")
 
 
-def _resolve_output_files(
-    output_pattern: str, num_files: int, force: bool = False
-) -> List[Path]:
+def _resolve_output_files(output_pattern: str, num_files: int, force: bool = False) -> List[Path]:
     """Validate output pattern and preflight all output file paths."""
     try:
         output_pattern % 0
@@ -113,9 +111,7 @@ def _validate_output_pattern(output_pattern: str) -> None:
         raise ValueError(f"Invalid output pattern format: {e}") from e
 
 
-def _open_validated_output_path(
-    output_pattern: str, index: int, force: bool = False
-) -> Path:
+def _open_validated_output_path(output_pattern: str, index: int, force: bool = False) -> Path:
     """Resolve one output path from a pattern and reject existing targets unless force."""
     output_path = Path(output_pattern % index)
     if output_path.exists():

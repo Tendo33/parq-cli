@@ -3,7 +3,7 @@ name = "parq-cli"
 version = "0.2.0"
 description = "A powerful command-line tool for inspecting tabular files like Parquet, CSV, and XLSX"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "pyarrow>=18.0.0",
     "typer>=0.15.0",
@@ -19,7 +19,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -57,7 +56,7 @@ packages = ["parq"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.pytest.ini_options]
 markers = [

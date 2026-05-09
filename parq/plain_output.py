@@ -78,9 +78,22 @@ class PlainOutputFormatter:
     @staticmethod
     def print_stats(stats_rows: List[Dict[str, Any]]) -> None:
         writer = PlainOutputFormatter._writer()
-        writer.writerow(["name", "type", "count", "null_count", "min", "max", "mean", "cardinality", "top_values"])
+        writer.writerow(
+            [
+                "name",
+                "type",
+                "count",
+                "null_count",
+                "min",
+                "max",
+                "mean",
+                "cardinality",
+                "top_values",
+            ]
+        )
         for row in stats_rows:
             import json as _json
+
             top_values = row.get("top_values")
             top_str = _json.dumps(top_values) if top_values else ""
             writer.writerow(
@@ -168,7 +181,9 @@ class JsonOutputFormatter:
         for batch in arrow_table.to_batches():
             batch_dict = batch.to_pydict()
             for row_idx in range(len(batch)):
-                rows.append({column: batch_dict[column][row_idx] for column in arrow_table.column_names})
+                rows.append(
+                    {column: batch_dict[column][row_idx] for column in arrow_table.column_names}
+                )
         print(json.dumps({"rows": rows}, default=str))
 
     @staticmethod

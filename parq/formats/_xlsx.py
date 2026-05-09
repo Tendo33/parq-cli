@@ -39,9 +39,7 @@ def _resolve_xlsx_sheet(workbook: Any, sheet: Optional[str]) -> Any:
             )
         return sheets[idx]
     if sheet not in workbook.sheetnames:
-        raise ValueError(
-            f"Sheet '{sheet}' not found — available sheets: {workbook.sheetnames}"
-        )
+        raise ValueError(f"Sheet '{sheet}' not found — available sheets: {workbook.sheetnames}")
     return workbook[sheet]
 
 
@@ -51,9 +49,7 @@ def _normalize_excel_headers(header_row: List[Any]) -> List[str]:
     normalized = []
     for idx, value in enumerate(header_row, start=1):
         base_name = (
-            str(value).strip()
-            if value is not None and str(value).strip()
-            else f"column_{idx}"
+            str(value).strip() if value is not None and str(value).strip() else f"column_{idx}"
         )
         name = base_name
         suffix = 2

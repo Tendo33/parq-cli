@@ -285,7 +285,9 @@ def render_markdown_report(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark small vs large multi-format performance.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark small vs large multi-format performance."
+    )
     parser.add_argument(
         "--output-dir",
         default="/tmp/parq-bench",

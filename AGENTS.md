@@ -23,7 +23,7 @@ Supporting assets and utilities:
 - `ruff check --fix parq tests`: auto-fix lint issues where possible.
 
 ## Coding Style & Naming Conventions
-Target Python is `>=3.9`. Use 4-space indentation and keep lines within 100 chars (`[tool.ruff] line-length = 100`).  
+Target Python is `>=3.10`. Use 4-space indentation and keep lines within 100 chars (`[tool.ruff] line-length = 100`).  
 Follow Python naming conventions:
 - modules/functions/variables: `snake_case`
 - classes: `PascalCase`

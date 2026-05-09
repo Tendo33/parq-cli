@@ -117,11 +117,13 @@ class TestParquetReader:
     def test_read_head_with_columns_optimized_path(self, tmp_path):
         """Test column pruning works with optimized row-group path."""
         file_path = tmp_path / "multi_rg.parquet"
-        table = pa.table({
-            "id": list(range(40)),
-            "value": [f"v{i}" for i in range(40)],
-            "extra": [float(i) for i in range(40)],
-        })
+        table = pa.table(
+            {
+                "id": list(range(40)),
+                "value": [f"v{i}" for i in range(40)],
+                "extra": [float(i) for i in range(40)],
+            }
+        )
         pq.write_table(table, file_path, row_group_size=5)
         reader = ParquetReader(str(file_path))
         result = reader.read_head(2, columns=["id"])
@@ -203,11 +205,13 @@ class TestParquetReader:
     def test_read_tail_with_columns_optimized_path(self, tmp_path):
         """Test column pruning works with optimized row-group tail path."""
         file_path = tmp_path / "multi_rg_tail.parquet"
-        table = pa.table({
-            "id": list(range(40)),
-            "value": [f"v{i}" for i in range(40)],
-            "extra": [float(i) for i in range(40)],
-        })
+        table = pa.table(
+            {
+                "id": list(range(40)),
+                "value": [f"v{i}" for i in range(40)],
+                "extra": [float(i) for i in range(40)],
+            }
+        )
         pq.write_table(table, file_path, row_group_size=5)
         reader = ParquetReader(str(file_path))
         result = reader.read_tail(3, columns=["id", "value"])
@@ -328,7 +332,9 @@ class TestParquetReader:
             assert file_path.exists()
             assert file_path.parent == tmp_path / "output"
 
-    def test_split_cleans_up_outputs_on_write_error(self, sample_parquet_file, tmp_path, monkeypatch):
+    def test_split_cleans_up_outputs_on_write_error(
+        self, sample_parquet_file, tmp_path, monkeypatch
+    ):
         """Test split removes created outputs if writing fails partway through."""
         reader = ParquetReader(str(sample_parquet_file))
         output_pattern = str(tmp_path / "split-%03d.parquet")
@@ -424,7 +430,9 @@ class TestMultiFormatReader:
         workbook.close()
 
         calls = {"count": 0}
-        original_count_rows = __import__("parq.reader", fromlist=["_count_xlsx_rows"])._count_xlsx_rows
+        original_count_rows = __import__(
+            "parq.reader", fromlist=["_count_xlsx_rows"]
+        )._count_xlsx_rows
 
         def wrapped_count_rows(*args, **kwargs):
             calls["count"] += 1
@@ -487,6 +495,7 @@ class TestMultiFormatReader:
 
     def test_xlsx_tail_uses_row_iteration(self, sample_xlsx_file, monkeypatch):
         """XLSX tail should work without going through full-table materialization."""
+
         def fail_read_columns(self, columns=None):
             del self, columns
             raise AssertionError("xlsx tail fell back to read_columns")
@@ -546,6 +555,7 @@ class TestMultiFormatReader:
         self, sample_xlsx_file, monkeypatch
     ):
         """Fast XLSX metadata should avoid dedicated row counting."""
+
         def fail_count_rows(*args, **kwargs):
             del args, kwargs
             raise AssertionError("fast metadata triggered xlsx row counting")
@@ -583,9 +593,7 @@ class TestMultiFormatReader:
         row_counts = [pacsv.read_csv(p).num_rows for p in output_files]
         assert row_counts == [2, 2, 1]
 
-    def test_split_csv_record_count_avoids_precount(
-        self, sample_csv_file, tmp_path, monkeypatch
-    ):
+    def test_split_csv_record_count_avoids_precount(self, sample_csv_file, tmp_path, monkeypatch):
         """record_count splits should stream CSV once without an upfront num_rows scan."""
         original = __import__("parq.reader", fromlist=["_scan_csv_metadata"])._scan_csv_metadata
 
@@ -756,7 +764,9 @@ class TestMultiFormatReader:
 
         def wrapped_build(reader, key_columns, selected_columns, comparable_columns, side_name):
             calls.append(side_name)
-            return original_build(reader, key_columns, selected_columns, comparable_columns, side_name)
+            return original_build(
+                reader, key_columns, selected_columns, comparable_columns, side_name
+            )
 
         monkeypatch.setattr(reader_mod, "_build_diff_index", wrapped_build)
 

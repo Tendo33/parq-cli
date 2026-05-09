@@ -12,7 +12,7 @@ def test_publish_script_uses_project_virtualenv_tools():
     assert 'PYTHON_BIN="./.venv/bin/python"' in content
     assert 'PYTEST_BIN="./.venv/bin/pytest"' in content
     assert 'TWINE_BIN="./.venv/bin/twine"' in content
-    assert '$PYTHON_BIN -m build' in content
+    assert "$PYTHON_BIN -m build" in content
     assert '$PYTEST_BIN -m "not performance"' in content
 
 

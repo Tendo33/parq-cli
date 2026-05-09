@@ -19,9 +19,7 @@ class TestPlainOutputFormatter:
         assert "10" in out
 
     def test_format_schema(self, capsys):
-        PlainOutputFormatter.print_schema([
-            {"name": "id", "type": "int64", "nullable": True}
-        ])
+        PlainOutputFormatter.print_schema([{"name": "id", "type": "int64", "nullable": True}])
         out = capsys.readouterr().out
         assert "id" in out
         assert "int64" in out

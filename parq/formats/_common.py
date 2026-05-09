@@ -169,9 +169,7 @@ def _is_categorical_type(arrow_type: pa.DataType) -> bool:
     )
 
 
-def _compute_table_stats(
-    table: pa.Table, limit: int = 50, top_n: int = 5
-) -> List[Dict[str, Any]]:
+def _compute_table_stats(table: pa.Table, limit: int = 50, top_n: int = 5) -> List[Dict[str, Any]]:
     """Compute column statistics for a materialized Arrow table."""
     stats_rows: List[Dict[str, Any]] = []
     for field in table.schema:
@@ -199,8 +197,7 @@ def _compute_table_stats(
             values_list = vc.field("values").to_pylist()
             counts_list = vc.field("counts").to_pylist()
             value_map: Dict[str, int] = {
-                (str(v) if v is not None else ""): int(c)
-                for v, c in zip(values_list, counts_list)
+                (str(v) if v is not None else ""): int(c) for v, c in zip(values_list, counts_list)
             }
             row["cardinality"] = len(value_map)
             sorted_values = sorted(value_map.items(), key=lambda x: x[1], reverse=True)

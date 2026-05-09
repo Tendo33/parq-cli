@@ -122,7 +122,9 @@ class OutputFormatter:
         for batch in arrow_table.to_batches():
             batch_dict = batch.to_pydict()
             for row_idx in range(len(batch)):
-                table.add_row(*[str(batch_dict[col_name][row_idx]) for col_name in arrow_table.column_names])
+                table.add_row(
+                    *[str(batch_dict[col_name][row_idx]) for col_name in arrow_table.column_names]
+                )
 
         console.print(table)
 
@@ -140,7 +142,9 @@ class OutputFormatter:
     @staticmethod
     def print_error(message: str) -> None:
         """Print error message."""
-        console.print(f"[bold red]{_safe_text(chr(0x274C) + ' Error:', 'Error:')}[/bold red] {message}")
+        console.print(
+            f"[bold red]{_safe_text(chr(0x274C) + ' Error:', 'Error:')}[/bold red] {message}"
+        )
 
     @staticmethod
     def print_success(message: str) -> None:
@@ -156,16 +160,24 @@ class OutputFormatter:
             show_header=True,
             header_style="bold magenta",
         )
-        for column in ["name", "type", "count", "null_count", "min", "max", "mean", "cardinality", "top values"]:
+        for column in [
+            "name",
+            "type",
+            "count",
+            "null_count",
+            "min",
+            "max",
+            "mean",
+            "cardinality",
+            "top values",
+        ]:
             table.add_column(column, style="cyan" if column == "name" else None)
 
         for row in stats_rows:
             top_values = row.get("top_values")
             top_str = ""
             if top_values:
-                top_str = ", ".join(
-                    f"{item['value']}({item['count']})" for item in top_values
-                )
+                top_str = ", ".join(f"{item['value']}({item['count']})" for item in top_values)
             cardinality = row.get("cardinality")
             table.add_row(
                 str(row["name"]),
