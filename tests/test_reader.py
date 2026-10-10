@@ -799,3 +799,180 @@ class TestMultiFormatReader:
         assert result["only_left"] == []
         assert result["only_right"] == []
         assert result["changed_rows"] == []
+
+    def test_diff_partition_matches_small_file_counts(self, tmp_path, monkeypatch):
+        """Bucketed diff should keep the same counts as the in-memory path."""
+        import parq.reader as reader_mod
+
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(
+            pa.table({"id": [1, 2, 3, 4], "value": ["a", "b", "c", "d"]}),
+            left,
+        )
+        pacsv.write_csv(
+            pa.table({"id": [3, 4, 5], "value": ["c", "changed", "e"]}),
+            right,
+        )
+
+        expected = diff_files(left, right, ["id"])
+        monkeypatch.setattr(reader_mod, "DIFF_MEMORY_ROW_LIMIT", 2)
+        actual = diff_files(left, right, ["id"])
+
+        assert actual["only_left_count"] == expected["only_left_count"] == 2
+        assert actual["only_right_count"] == expected["only_right_count"] == 1
+        assert actual["changed_count"] == expected["changed_count"] == 1
+
+    def test_diff_partition_rejects_duplicate_keys(self, tmp_path, monkeypatch):
+        """Duplicate keys should still fail when diff spills into buckets."""
+        import parq.reader as reader_mod
+
+        monkeypatch.setattr(reader_mod, "DIFF_MEMORY_ROW_LIMIT", 2)
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(pa.table({"id": [1, 1, 2], "value": ["a", "b", "c"]}), left)
+        pacsv.write_csv(pa.table({"id": [1, 2, 3], "value": ["a", "c", "d"]}), right)
+
+        with pytest.raises(ValueError, match="Duplicate key"):
+            diff_files(left, right, ["id"])
+
+    def test_record_count_split_reports_unknown_progress_total(self, sample_csv_file, tmp_path):
+        """Single-pass record splits should not pretend the total is already known."""
+        seen = []
+
+        def callback(current, total):
+            seen.append((current, total))
+
+        reader = MultiFormatReader(str(sample_csv_file))
+        reader.split_file(
+            output_pattern=str(tmp_path / "part-%02d.csv"),
+            record_count=2,
+            progress_callback=callback,
+        )
+
+        assert seen
+        assert all(total == 0 for _, total in seen)
+        assert seen[-1][0] == 5
+
+    def test_stats_top_values_keep_late_frequent_values(self):
+        """Top values should include a frequent item that appears after many rare ones."""
+        from parq.formats._common import _compute_stats_from_batches
+
+        labels = [f"rare-{index}" for index in range(10_001)]
+        labels.extend(["frequent"] * 20)
+        table = pa.table({"label": labels})
+        rows = _compute_stats_from_batches(table.to_batches(max_chunksize=1000), table.schema, top_n=1)
+
+        assert rows[0]["cardinality"] == 10_002
+        assert rows[0]["top_values"] == [{"value": "frequent", "count": 20}]
+
+    def test_stats_cardinality_does_not_treat_null_as_empty_string(self):
+        """Nulls stay in null_count and do not collapse into the empty string."""
+        from parq.formats._common import _compute_stats_from_batches
+
+        table = pa.table({"label": pa.array(["a", None, "", "a"])})
+        rows = _compute_stats_from_batches(table.to_batches(), table.schema)
+
+        assert rows[0]["null_count"] == 1
+        assert rows[0]["cardinality"] == 2
+        assert {item["value"] for item in rows[0]["top_values"]} == {"a", ""}
+
+    def test_convert_csv_to_tsv(self, sample_csv_file, tmp_path):
+        """Conversion should write a tab-separated file for a .tsv destination."""
+        output_path = tmp_path / "converted.tsv"
+        reader = MultiFormatReader(str(sample_csv_file))
+        rows = reader.convert_file(output_path)
+
+        assert rows == 5
+        text = output_path.read_text(encoding="utf-8")
+        assert "\t" in text.splitlines()[0]
+        reread = MultiFormatReader(str(output_path))
+        assert reread.num_rows == 5
+        assert reread.schema.names[0] == "id"
+
+    def test_xlsx_schema_stays_sampled_until_full_read(self, tmp_path):
+        """Schema preview stays sampled, and a later full read widens mixed types."""
+        openpyxl = pytest.importorskip("openpyxl")
+        file_path = tmp_path / "late-widen.xlsx"
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["value"])
+        for index in range(1000):
+            worksheet.append([index])
+        worksheet.append(["text-after-1000"])
+        workbook.save(file_path)
+        workbook.close()
+
+        reader = MultiFormatReader(str(file_path))
+        assert str(reader.schema.field("value").type) == "int64"
+        assert reader.num_rows == 1001
+
+        table = reader.read_tail(1)
+        assert table["value"].to_pylist() == ["text-after-1000"]
+
+    def test_xlsx_head_reads_active_sheet_by_default(self, tmp_path):
+        """Omitting --sheet should read the workbook's active sheet."""
+        openpyxl = pytest.importorskip("openpyxl")
+        file_path = tmp_path / "active.xlsx"
+        workbook = openpyxl.Workbook()
+        first = workbook.active
+        first.title = "First"
+        first.append(["id"])
+        first.append(["first"])
+        second = workbook.create_sheet("Second")
+        second.append(["id"])
+        second.append(["second"])
+        workbook.active = second
+        workbook.save(file_path)
+        workbook.close()
+
+        reader = MultiFormatReader(str(file_path))
+        assert reader.read_head(1)["id"].to_pylist() == ["second"]
+
+    def test_xlsx_full_read_parses_workbook_once(self, tmp_path, monkeypatch):
+        """tail and convert should parse a large sheet once, then reuse those rows."""
+        openpyxl = pytest.importorskip("openpyxl")
+        python_calamine = pytest.importorskip("python_calamine")
+        file_path = tmp_path / "once.xlsx"
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["id"])
+        for index in range(1200):
+            worksheet.append([index])
+        workbook.save(file_path)
+        workbook.close()
+
+        calls = {"count": 0}
+        original_load = python_calamine.load_workbook
+
+        def wrapped_load(path):
+            calls["count"] += 1
+            return original_load(path)
+
+        monkeypatch.setattr(python_calamine, "load_workbook", wrapped_load)
+
+        reader = MultiFormatReader(str(file_path))
+        assert reader.read_tail(1)["id"].to_pylist() == [1199]
+        assert calls["count"] == 1
+
+        calls["count"] = 0
+        output_path = tmp_path / "once.parquet"
+        converter = MultiFormatReader(str(file_path))
+        seen_totals = []
+        converter.convert_file(
+            output_path, progress_callback=lambda current, total: seen_totals.append(total)
+        )
+        assert calls["count"] == 1
+        assert seen_totals
+        assert seen_totals[-1] == 1200
+
+    def test_csv_convert_progress_does_not_require_a_known_total(self, sample_csv_file, tmp_path):
+        """CSV convert should stream once and report an unknown progress total."""
+        seen = []
+        reader = MultiFormatReader(str(sample_csv_file))
+        reader.convert_file(
+            tmp_path / "out.parquet",
+            progress_callback=lambda current, total: seen.append((current, total)),
+        )
+        assert seen
+        assert all(total == 0 for _current, total in seen)

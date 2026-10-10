@@ -9,7 +9,7 @@
 
 ## 简介
 
-`parq` 面向日常最常见的表格文件操作，支持 `.parquet`、`.csv`、`.xlsx`：
+`parq` 面向日常最常见的表格文件操作，支持 `.parquet`、`.csv`、`.tsv`、`.xlsx`：
 
 - 查看元数据和 schema
 - 预览前几行或后几行
@@ -73,19 +73,19 @@ parq merge part-001.parquet part-002.parquet merged.parquet
 
 ## 支持的格式
 
-| 命令 | Parquet | CSV | XLSX |
-| --- | --- | --- | --- |
-| `meta` | 支持 | 支持 | 支持 |
-| `schema` | 支持 | 支持 | 支持 |
-| `head` / `tail` | 支持 | 支持 | 支持 |
-| `count` | 支持 | 支持 | 支持 |
-| `split` | 支持 | 支持 | 支持 |
-| `stats` | 支持 | 支持 | 支持 |
-| `convert` | 支持 | 支持 | 支持 |
-| `diff` | 支持 | 支持 | 先转换再对比 |
-| `merge` | 支持 | 支持 | 支持 |
+| 命令 | Parquet | CSV | TSV | XLSX |
+| --- | --- | --- | --- | --- |
+| `meta` | 支持 | 支持 | 支持 | 支持 |
+| `schema` | 支持 | 支持 | 支持 | 支持 |
+| `head` / `tail` | 支持 | 支持 | 支持 | 支持 |
+| `count` | 支持 | 支持 | 支持 | 支持 |
+| `split` | 支持 | 支持 | 支持 | 支持 |
+| `stats` | 支持 | 支持 | 支持 | 支持 |
+| `convert` | 支持 | 支持 | 支持 | 支持 |
+| `diff` | 支持 | 支持 | 支持 | 先转换再对比 |
+| `merge` | 支持 | 支持 | 支持 | 支持 |
 
-`XLSX` 依赖 `openpyxl`。
+`XLSX` 的读取使用 `python-calamine`，写出仍使用 `openpyxl`，两者都随 `parq-cli[xlsx]` 安装。公式单元格读取的是 Excel 已经算出的缓存值，没有缓存的公式会是空值。`.tsv` 按扩展名自动使用制表符；其它分隔符用 `--delimiter`。`--sheet` 选择 XLSX 工作表，对 `merge` 同样生效。
 
 ## 命令说明
 
@@ -149,9 +149,9 @@ parq split FILE --record-count 100000 -n "chunks/part-%03d.parquet"
 规则：
 
 - `--file-count` 与 `--record-count` 二选一
-- 输出格式由 `--name-format` 的后缀决定
-- 不会覆盖已存在的目标文件
-- 在 `--record-count` 模式下，CSV/XLSX 现在走单遍流式拆分，不再先整表计数
+- 输出格式由 `--name-format` 的后缀决定，包括 `.tsv`
+- 默认遇到已存在的目标文件会报错；`--force` / `-F` 会覆盖
+- 在 `--record-count` 模式下，CSV 单遍流式写出，进度条保持不确定状态。XLSX 会先把工作表解析进内存，写出时进度条同样保持不确定状态
 
 ### `stats`
 
@@ -164,7 +164,9 @@ parq stats FILE --limit 20
 计算按列汇总的轻量统计：
 
 - 数值列输出 `count`、`null_count`、`min`、`max`、`mean`
-- 非数值列输出 `count` 和 `null_count`
+- 字符串、布尔和时间列另外输出 `cardinality` 和 `top_values`
+- 默认 `--top-n` 是 `5`；设为 `0` 则不输出 top values
+- 不同值超过 1 万个时，基数和 top values 仍然是精确结果；空值只计入 `null_count`
 - 默认 `--limit 50`，避免宽表直接刷满终端
 
 ### `convert`
@@ -178,9 +180,9 @@ parq convert SOURCE OUTPUT --columns id,name,status
 
 说明：
 
-- 当前目标格式为 `.parquet`、`.csv`、`.xlsx`
+- 当前目标格式为 `.parquet`、`.csv`、`.tsv`、`.xlsx`
 - 能流式处理的路径会尽量流式处理
-- 若输出文件已存在，会直接报错，不会覆盖
+- 默认遇到已存在的输出文件会报错；`--force` / `-F` 会覆盖
 
 ### `diff`
 
@@ -201,9 +203,11 @@ parq diff LEFT RIGHT --key id --summary-only
 说明：
 
 - `--key` 必填
-- `diff` 当前仅支持 Parquet 和 CSV
+- `diff` 当前支持 Parquet、CSV 和 TSV
+- 全局 `--delimiter` 会同时用于左右两个 CSV 输入
 - XLSX 需要先转换
 - 任一侧若出现重复 key，会直接报错
+- 单侧超过 10 万行时，会把数据按主键散列到临时文件，而不是把全部 key 放进内存
 - `--summary-only` 只保留计数，不输出样本内容
 
 ### `merge`
@@ -218,16 +222,21 @@ parq merge chunks/*.parquet merged.parquet
 说明：
 
 - schema 必须一致，或能被 Arrow 安全统一
-- 不会覆盖已存在的输出文件
-- 输出格式由输出文件后缀决定
+- 默认遇到已存在的输出文件会报错；`--force` / `-F` 会覆盖
+- 输出格式由输出文件后缀决定，包括 `.tsv`
+- 全局 `--delimiter` 和 `--sheet` 会作用于每一个输入
 
 ## 输出模式
 
 全局选项：
 
-- `--version`, `-v`：显示版本号
-- `--output`, `-o`：选择输出格式
+- `--version`, `-v`：显示版本号。放在子命令前面：`parq --version`
+- `--output`, `-o`：选择输出格式（`rich` | `plain` | `json`）
+- `--delimiter`, `-d`：CSV/TSV 输入分隔符，默认 `,`；`.tsv` 会自动使用制表符
+- `--sheet`：XLSX 工作表名称或从 0 开始的序号，默认活动工作表。纯数字会按序号处理，名叫 `1` 或 `2` 的工作表也一样
 - `--help`：显示帮助
+
+`--output`、`--delimiter`、`--sheet` 可以写在子命令前面，也可以写在子命令上面。同一个选项两处都写时，子命令上的值生效。`convert` 的 `--output` / `-o` 仍然是显示格式，目标文件是位置参数 `OUTPUT`。
 
 可选输出模式：
 
@@ -249,9 +258,9 @@ parq diff left.parquet right.parquet --key id --summary-only --output json
 
 - Parquet 的元数据、行数和预览会优先利用 Arrow metadata 与 row group 能力。
 - CSV `tail` 使用固定大小列窗口，而不是把整份数据都转成 Python dict。
-- CSV/XLSX 的 `split --record-count` 走单遍流式处理。
+- CSV 的 `split --record-count` 和 `convert` 单遍流式处理，进度条保持不确定状态，因为行数要等这一遍结束才知道。
 - 对大 CSV/XLSX，`meta --fast` 是最快的元数据探查入口。
-- XLSX 的 schema 推断只采样前 1000 行，不再默认整表扫描。
+- `parq schema` 和较短的 `head` 对 XLSX 只采样前 1000 行。`count`、`tail`、`stats`、`convert`、`split`、`merge` 把选中的工作表解析一次，后续值放不进样本类型时放宽该列，并把这些行留在内存里复用。
 
 如果你会反复处理大文件，把 CSV/XLSX 先转成 Parquet 依然是吞吐量最好的路径。
 

@@ -34,11 +34,15 @@ def _cleanup_split_files(writer: Any, created_paths: List[Path]) -> None:
 
 
 class _CsvChunkWriter:
-    """Incremental CSV writer backed by PyArrow CSVWriter."""
+    """Incremental CSV/TSV writer backed by PyArrow CSVWriter."""
 
-    def __init__(self, output_path: Path, schema: pa.Schema):
+    def __init__(self, output_path: Path, schema: pa.Schema, delimiter: str = ","):
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        self._writer = pacsv.CSVWriter(output_path, schema)
+        self._writer = pacsv.CSVWriter(
+            output_path,
+            schema,
+            write_options=pacsv.WriteOptions(delimiter=delimiter),
+        )
 
     def write_batch(self, batch: pa.RecordBatch) -> None:
         self._writer.write(batch)
@@ -82,7 +86,9 @@ def _open_chunk_writer(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         return pq.ParquetWriter(output_path, schema, compression=compression)
     if suffix == ".csv":
-        return _CsvChunkWriter(output_path, schema)
+        return _CsvChunkWriter(output_path, schema, delimiter=",")
+    if suffix == ".tsv":
+        return _CsvChunkWriter(output_path, schema, delimiter="\t")
     if suffix == ".xlsx":
         return _XlsxChunkWriter(output_path, schema)
     raise ValueError(f"Unsupported output file format: {suffix or '<none>'}")
@@ -234,7 +240,9 @@ def _stream_split_by_record_count(
                 rows_processed += rows_to_write
 
                 if progress_callback is not None:
-                    progress_callback(rows_processed, rows_processed)
+                    # Total row count is unknown in this single pass. 0 keeps the
+                    # progress bar indeterminate instead of pinning it at 100%.
+                    progress_callback(rows_processed, 0)
 
                 if current_rows >= record_count:
                     current_writer.close()

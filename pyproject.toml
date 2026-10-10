@@ -1,7 +1,7 @@
 [project]
 name = "parq-cli"
 version = "0.2.0"
-description = "A powerful command-line tool for inspecting tabular files like Parquet, CSV, and XLSX"
+description = "A command-line tool for inspecting tabular files: Parquet, CSV, TSV, and XLSX"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -37,6 +37,7 @@ parq = "parq.cli:app"
 [project.optional-dependencies]
 xlsx = [
     "openpyxl>=3.1.0",
+    "python-calamine>=0.8.0",
 ]
 dev = [
     "build>=1.2.0",

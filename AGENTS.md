@@ -12,4 +12,4 @@ This file is the cross-tool entrypoint for parq-cli.
 
 - Read `parq/cli.py`, `parq/reader.py`, relevant `parq/formats/*`, output formatters, and tests before editing.
 - Keep changes small and covered by CLI/reader/output tests.
-- Run focused tests first, then the repository verification gate.
+- Run focused tests first, then the repository verification gate: `pytest -m "not performance"` and `ruff check parq tests`.

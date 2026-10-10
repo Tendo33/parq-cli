@@ -37,8 +37,11 @@ from parq.formats._common import (
 from parq.formats._csv import _iter_csv_batches, _scan_csv_metadata
 from parq.formats._parquet import ParquetReader
 from parq.formats._xlsx import (
+    XLSX_TYPE_SAMPLE_ROWS,
     _count_xlsx_rows,
+    _iter_cached_xlsx_rows,
     _iter_xlsx_batches,
+    _load_xlsx_sheet,
     _scan_xlsx_structure,
 )
 
@@ -49,6 +52,10 @@ __all__ = [
     "diff_files",
     "merge_files",
 ]
+
+# Distinct keys kept in one in-memory diff index. Larger inputs are
+# hash-partitioned into temporary Parquet files.
+DIFF_MEMORY_ROW_LIMIT = 100_000
 
 
 class MultiFormatReader:
@@ -83,6 +90,7 @@ class MultiFormatReader:
 
         self._parquet_reader: Optional[ParquetReader] = None
         self._metadata_cache: Optional[_InputMetadata] = None
+        self._xlsx_cached_rows: Optional[List[List[Any]]] = None
         self.last_split_total_rows: Optional[int] = None
         self.last_write_total_rows: Optional[int] = None
 
@@ -106,6 +114,7 @@ class MultiFormatReader:
                     headers=self._metadata_cache.headers,
                     schema=self._metadata_cache.schema,
                     num_rows=_count_xlsx_rows(self.file_path, sheet=self._sheet),
+                    schema_complete=self._metadata_cache.schema_complete,
                 )
             return self._metadata_cache
 
@@ -117,11 +126,26 @@ class MultiFormatReader:
             )
         return self._metadata_cache
 
+    def _ensure_xlsx_types_for_full_read(self) -> None:
+        """Parse an XLSX sheet once and widen column types before a full read."""
+        if self.input_format != "xlsx":
+            return
+        if self._xlsx_cached_rows is not None:
+            return
+        if self._metadata_cache is not None and self._metadata_cache.schema_complete:
+            return
+        metadata, rows = _load_xlsx_sheet(self.file_path, sheet=self._sheet, sample_size=None)
+        self._metadata_cache = metadata
+        self._xlsx_cached_rows = rows or []
+
     def _iter_input_batches(self, columns: Optional[List[str]] = None) -> Iterator[pa.RecordBatch]:
         """Iterate non-parquet input in batches with format branching in one place."""
         metadata = self._load_metadata()
         if self.input_format == "csv":
             yield from _iter_csv_batches(self.file_path, columns=columns, delimiter=self._delimiter)
+            return
+        if self._xlsx_cached_rows is not None:
+            yield from _iter_cached_xlsx_rows(self._xlsx_cached_rows, metadata, columns=columns)
             return
         yield from _iter_xlsx_batches(self.file_path, metadata, columns=columns, sheet=self._sheet)
 
@@ -196,6 +220,8 @@ class MultiFormatReader:
     def read_head(self, n: int = 5, columns: Optional[List[str]] = None) -> pa.Table:
         if self._parquet_reader is not None:
             return self._parquet_reader.read_head(n=n, columns=columns)
+        if n > XLSX_TYPE_SAMPLE_ROWS:
+            self._ensure_xlsx_types_for_full_read()
         _validate_preview_params(n, self.schema, columns)
         if n == 0:
             return _create_empty_table(self.schema, columns=columns)
@@ -208,6 +234,8 @@ class MultiFormatReader:
     def read_tail(self, n: int = 5, columns: Optional[List[str]] = None) -> pa.Table:
         if self._parquet_reader is not None:
             return self._parquet_reader.read_tail(n=n, columns=columns)
+        if n > 0:
+            self._ensure_xlsx_types_for_full_read()
         _validate_preview_params(n, self.schema, columns)
         if n == 0:
             return _create_empty_table(self.schema, columns=columns)
@@ -221,6 +249,7 @@ class MultiFormatReader:
     def read_columns(self, columns: Optional[List[str]] = None) -> pa.Table:
         if self._parquet_reader is not None:
             return self._parquet_reader.read_columns(columns=columns)
+        self._ensure_xlsx_types_for_full_read()
         selected_schema = self._selected_schema(columns)
         batches = list(self._iter_input_batches(columns=columns))
         if not batches:
@@ -316,6 +345,7 @@ class MultiFormatReader:
         force: bool = False,
     ) -> List[Path]:
         """Split the input file into multiple output files."""
+        self._ensure_xlsx_types_for_full_read()
         _validate_output_pattern(output_pattern)
 
         sample_output = Path(output_pattern % 0)
@@ -384,6 +414,7 @@ class MultiFormatReader:
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         """Convert the input file to a single supported output file."""
+        self._ensure_xlsx_types_for_full_read()
         output_path = Path(output_path)
         if self._parquet_reader is not None:
             rows_written = self._parquet_reader.convert_file(
@@ -392,7 +423,13 @@ class MultiFormatReader:
             self.last_write_total_rows = rows_written
             return rows_written
 
-        total_rows = self.num_rows if progress_callback is not None else 0
+        # CSV row counts require their own scan. Leave the total unknown so
+        # convert stays single-pass. XLSX already learned the count while
+        # loading the sheet above.
+        if progress_callback is not None and self.input_format != "csv":
+            total_rows = self.num_rows
+        else:
+            total_rows = 0
         rows_written = _write_batches_to_output(
             self._iter_input_batches(columns=columns),
             self._selected_schema(columns),
@@ -408,6 +445,7 @@ class MultiFormatReader:
         self, columns: Optional[List[str]] = None, limit: int = 50, top_n: int = 5
     ) -> List[dict]:
         """Return simple column statistics for the current file."""
+        self._ensure_xlsx_types_for_full_read()
         if self._parquet_reader is not None:
             return self._parquet_reader.get_stats(columns=columns, limit=limit, top_n=top_n)
         selected_schema = self._selected_schema(columns)
@@ -463,6 +501,334 @@ def _build_diff_index(
     return index
 
 
+def _empty_row_diff() -> dict:
+    """Return a zeroed row-diff payload without schema fields."""
+    return {
+        "only_left_count": 0,
+        "only_right_count": 0,
+        "changed_count": 0,
+        "only_left": [],
+        "only_right": [],
+        "changed_rows": [],
+    }
+
+
+def _render_key(key: tuple[Any, ...]) -> Any:
+    """Render a one-column key as a scalar and a composite key as a tuple."""
+    return key if len(key) > 1 else key[0]
+
+
+def _bucket_key(key: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Normalize parts that compare equal so they land in the same bucket."""
+    normalized = []
+    for part in key:
+        if isinstance(part, float) and part == 0:
+            normalized.append(0.0)
+        else:
+            normalized.append(part)
+    return tuple(normalized)
+
+
+def _stable_bucket(key: tuple[Any, ...], num_buckets: int, salt: int) -> int:
+    """Hash a key into a bucket without depending on PYTHONHASHSEED."""
+    import zlib
+
+    payload = repr((salt, _bucket_key(key))).encode("utf-8", errors="backslashreplace")
+    return zlib.crc32(payload) % num_buckets
+
+
+def _diff_rows_in_memory(
+    left_reader: Optional[MultiFormatReader],
+    right_reader: Optional[MultiFormatReader],
+    key_columns: List[str],
+    selected_columns: List[str],
+    comparable_columns: List[str],
+    limit: int,
+    summary_only: bool,
+) -> dict:
+    """Diff two already-bounded inputs by indexing the smaller side."""
+    if left_reader is None and right_reader is None:
+        return _empty_row_diff()
+    if left_reader is None:
+        index_left = True
+        indexed_reader = None
+        streamed_reader = right_reader
+    elif right_reader is None:
+        index_left = False
+        indexed_reader = None
+        streamed_reader = left_reader
+    else:
+        index_left = left_reader.num_rows <= right_reader.num_rows
+        indexed_reader = left_reader if index_left else right_reader
+        streamed_reader = right_reader if index_left else left_reader
+
+    assert streamed_reader is not None
+    indexed_side_name = "left" if index_left else "right"
+    streamed_side_name = "right" if index_left else "left"
+    if indexed_reader is None:
+        indexed_rows: dict[tuple[Any, ...], dict[str, Any]] = {}
+    else:
+        indexed_rows = _build_diff_index(
+            indexed_reader,
+            key_columns,
+            selected_columns,
+            comparable_columns,
+            indexed_side_name,
+        )
+
+    missing_from_indexed: List[tuple[Any, ...]] = []
+    missing_from_indexed_count = 0
+    changed_rows = []
+    changed_count = 0
+    seen_streamed_keys: set[tuple[Any, ...]] = set()
+
+    for row in _iter_row_dicts(streamed_reader, selected_columns):
+        key = tuple(row[column] for column in key_columns)
+        if key in seen_streamed_keys:
+            raise ValueError(
+                f"Duplicate key found in {streamed_side_name} input: {_render_key(key)}"
+            )
+        seen_streamed_keys.add(key)
+
+        streamed_values = {column: row[column] for column in comparable_columns}
+        if key not in indexed_rows:
+            missing_from_indexed_count += 1
+            if not summary_only and len(missing_from_indexed) < limit:
+                missing_from_indexed.append(key)
+            continue
+
+        indexed_values = indexed_rows.pop(key)
+        if any(streamed_values[column] != indexed_values[column] for column in comparable_columns):
+            changed_count += 1
+            if index_left:
+                left_values = indexed_values
+                right_values = streamed_values
+            else:
+                left_values = streamed_values
+                right_values = indexed_values
+            if not summary_only and len(changed_rows) < limit:
+                changed_rows.append(
+                    {
+                        "key": _render_key(key),
+                        "left": left_values,
+                        "right": right_values,
+                    }
+                )
+
+    remaining_indexed_count = len(indexed_rows)
+    if not summary_only:
+        remaining_indexed_keys = sorted(indexed_rows.keys())[:limit]
+        missing_from_indexed.sort()
+        only_left_keys = remaining_indexed_keys if index_left else missing_from_indexed
+        only_right_keys = missing_from_indexed if index_left else remaining_indexed_keys
+    else:
+        only_left_keys = []
+        only_right_keys = []
+
+    return {
+        "only_left_count": (
+            remaining_indexed_count if index_left else missing_from_indexed_count
+        ),
+        "only_right_count": (
+            missing_from_indexed_count if index_left else remaining_indexed_count
+        ),
+        "changed_count": changed_count,
+        "only_left": [{"key": _render_key(key)} for key in only_left_keys[:limit]],
+        "only_right": [{"key": _render_key(key)} for key in only_right_keys[:limit]],
+        "changed_rows": [] if summary_only else changed_rows[:limit],
+    }
+
+
+def _spill_reader_to_buckets(
+    reader: MultiFormatReader,
+    selected_columns: List[str],
+    key_columns: List[str],
+    directory: Path,
+    side: str,
+    num_buckets: int,
+    salt: int,
+) -> List[Optional[Path]]:
+    """Write selected rows into hash buckets without holding every key."""
+    import pyarrow.parquet as pq
+
+    paths: List[Optional[Path]] = [None] * num_buckets
+    writers: List[Any] = []
+    writer_for_bucket: List[Any] = [None] * num_buckets
+    try:
+        for batch in _reader_batch_iterator(reader, columns=selected_columns):
+            if len(batch) == 0:
+                continue
+            batch_dict = batch.to_pydict()
+            bucket_indices: List[List[int]] = [[] for _ in range(num_buckets)]
+            for row_idx in range(len(batch)):
+                key = tuple(batch_dict[column][row_idx] for column in key_columns)
+                bucket = _stable_bucket(key, num_buckets, salt)
+                bucket_indices[bucket].append(row_idx)
+            for bucket, indices in enumerate(bucket_indices):
+                if not indices:
+                    continue
+                taken = batch.take(pa.array(indices, type=pa.int64()))
+                writer = writer_for_bucket[bucket]
+                if writer is None:
+                    output_path = directory / f"{side}-{bucket}.parquet"
+                    writer = pq.ParquetWriter(output_path, taken.schema)
+                    writer_for_bucket[bucket] = writer
+                    writers.append(writer)
+                    paths[bucket] = output_path
+                writer.write_batch(taken)
+        for writer in writers:
+            writer.close()
+        writers.clear()
+        return paths
+    finally:
+        for writer in writers:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+
+def _merge_row_diffs(parts: List[dict], limit: int, summary_only: bool) -> dict:
+    """Sum partitioned diff counts and keep a bounded sample."""
+    merged = _empty_row_diff()
+    for part in parts:
+        merged["only_left_count"] += part["only_left_count"]
+        merged["only_right_count"] += part["only_right_count"]
+        merged["changed_count"] += part["changed_count"]
+        if summary_only:
+            continue
+        merged["only_left"].extend(part["only_left"])
+        merged["only_right"].extend(part["only_right"])
+        merged["changed_rows"].extend(part["changed_rows"])
+    if summary_only:
+        return merged
+    merged["only_left"] = merged["only_left"][:limit]
+    merged["only_right"] = merged["only_right"][:limit]
+    merged["changed_rows"] = merged["changed_rows"][:limit]
+    return merged
+
+
+def _diff_rows_partitioned(
+    left_reader: Optional[MultiFormatReader],
+    right_reader: Optional[MultiFormatReader],
+    key_columns: List[str],
+    selected_columns: List[str],
+    comparable_columns: List[str],
+    limit: int,
+    summary_only: bool,
+    salt: int,
+    depth: int,
+    parent_rows: int,
+) -> dict:
+    """Split both sides by key hash and diff one bucket at a time."""
+    import math
+    import tempfile
+
+    num_buckets = min(32, max(2, math.ceil(parent_rows / DIFF_MEMORY_ROW_LIMIT)))
+    with tempfile.TemporaryDirectory(prefix="parq-diff-") as tmp_dir:
+        directory = Path(tmp_dir)
+        if left_reader is None:
+            left_paths: List[Optional[Path]] = [None] * num_buckets
+        else:
+            left_paths = _spill_reader_to_buckets(
+                left_reader,
+                selected_columns,
+                key_columns,
+                directory,
+                "left",
+                num_buckets,
+                salt,
+            )
+        if right_reader is None:
+            right_paths: List[Optional[Path]] = [None] * num_buckets
+        else:
+            right_paths = _spill_reader_to_buckets(
+                right_reader,
+                selected_columns,
+                key_columns,
+                directory,
+                "right",
+                num_buckets,
+                salt,
+            )
+
+        parts = []
+        for bucket in range(num_buckets):
+            left_path = left_paths[bucket]
+            right_path = right_paths[bucket]
+            if left_path is None and right_path is None:
+                continue
+            bucket_left = MultiFormatReader(str(left_path)) if left_path is not None else None
+            bucket_right = MultiFormatReader(str(right_path)) if right_path is not None else None
+            bucket_rows = max(
+                0 if bucket_left is None else bucket_left.num_rows,
+                0 if bucket_right is None else bucket_right.num_rows,
+            )
+            if bucket_rows >= parent_rows and bucket_rows > DIFF_MEMORY_ROW_LIMIT:
+                part = _diff_rows_in_memory(
+                    bucket_left,
+                    bucket_right,
+                    key_columns,
+                    selected_columns,
+                    comparable_columns,
+                    limit,
+                    summary_only,
+                )
+            else:
+                part = _diff_rows_bounded(
+                    bucket_left,
+                    bucket_right,
+                    key_columns,
+                    selected_columns,
+                    comparable_columns,
+                    limit,
+                    summary_only,
+                    salt=salt + 1 + bucket,
+                    depth=depth + 1,
+                )
+            parts.append(part)
+        return _merge_row_diffs(parts, limit, summary_only)
+
+
+def _diff_rows_bounded(
+    left_reader: Optional[MultiFormatReader],
+    right_reader: Optional[MultiFormatReader],
+    key_columns: List[str],
+    selected_columns: List[str],
+    comparable_columns: List[str],
+    limit: int,
+    summary_only: bool,
+    salt: int = 0,
+    depth: int = 0,
+) -> dict:
+    """Diff rows in memory, or partition when one side exceeds the row limit."""
+    left_rows = 0 if left_reader is None else left_reader.num_rows
+    right_rows = 0 if right_reader is None else right_reader.num_rows
+    largest = max(left_rows, right_rows)
+    if largest <= DIFF_MEMORY_ROW_LIMIT or depth >= 8:
+        return _diff_rows_in_memory(
+            left_reader,
+            right_reader,
+            key_columns,
+            selected_columns,
+            comparable_columns,
+            limit,
+            summary_only,
+        )
+    return _diff_rows_partitioned(
+        left_reader,
+        right_reader,
+        key_columns,
+        selected_columns,
+        comparable_columns,
+        limit,
+        summary_only,
+        salt=salt,
+        depth=depth,
+        parent_rows=largest,
+    )
+
+
 def diff_files(
     left_path: Union[str, Path],
     right_path: Union[str, Path],
@@ -470,14 +836,16 @@ def diff_files(
     columns: Optional[List[str]] = None,
     limit: int = 20,
     summary_only: bool = False,
+    delimiter: str = ",",
+    sheet: Optional[str] = None,
 ) -> dict:
-    """Compute a keyed diff summary for two parquet/csv files."""
-    left_reader = MultiFormatReader(str(left_path))
-    right_reader = MultiFormatReader(str(right_path))
+    """Compute a keyed diff summary for two parquet, csv, or tsv files."""
+    left_reader = MultiFormatReader(str(left_path), delimiter=delimiter, sheet=sheet)
+    right_reader = MultiFormatReader(str(right_path), delimiter=delimiter, sheet=sheet)
 
     if "xlsx" in {left_reader.input_format, right_reader.input_format}:
         raise ValueError(
-            "diff currently supports parquet/csv inputs; convert xlsx first with:\n"
+            "diff currently supports parquet, csv, and tsv inputs; convert xlsx first with:\n"
             "  parq convert input.xlsx output.parquet"
         )
 
@@ -509,75 +877,21 @@ def diff_files(
         name for name in left_names if name in right_names and name not in key_columns
     ]
     selected_columns = list(dict.fromkeys(key_columns + comparable_columns))
-    index_left = left_reader.num_rows <= right_reader.num_rows
-    indexed_reader = left_reader if index_left else right_reader
-    streamed_reader = right_reader if index_left else left_reader
-    indexed_side_name = "left" if index_left else "right"
-    streamed_side_name = "right" if index_left else "left"
-
-    indexed_rows = _build_diff_index(
-        indexed_reader,
+    row_diff = _diff_rows_bounded(
+        left_reader,
+        right_reader,
         key_columns,
         selected_columns,
         comparable_columns,
-        indexed_side_name,
+        limit,
+        summary_only,
     )
-    missing_from_indexed: List[tuple[Any, ...]] = []
-    missing_from_indexed_count = 0
-    changed_rows = []
-    changed_count = 0
-    seen_streamed_keys: set[tuple[Any, ...]] = set()
-
-    for row in _iter_row_dicts(streamed_reader, selected_columns):
-        key = tuple(row[column] for column in key_columns)
-        if key in seen_streamed_keys:
-            rendered_key = key if len(key) > 1 else key[0]
-            raise ValueError(f"Duplicate key found in {streamed_side_name} input: {rendered_key}")
-        seen_streamed_keys.add(key)
-
-        streamed_values = {column: row[column] for column in comparable_columns}
-        if key not in indexed_rows:
-            missing_from_indexed_count += 1
-            if not summary_only and len(missing_from_indexed) < limit:
-                missing_from_indexed.append(key)
-            continue
-
-        indexed_values = indexed_rows.pop(key)
-        if any(streamed_values[column] != indexed_values[column] for column in comparable_columns):
-            changed_count += 1
-            if index_left:
-                left_values = indexed_values
-                right_values = streamed_values
-            else:
-                left_values = streamed_values
-                right_values = indexed_values
-            if not summary_only and len(changed_rows) < limit:
-                changed_rows.append(
-                    {
-                        "key": key if len(key) > 1 else key[0],
-                        "left": left_values,
-                        "right": right_values,
-                    }
-                )
-
-    remaining_indexed_count = len(indexed_rows)
-    if not summary_only:
-        remaining_indexed_keys = sorted(indexed_rows.keys())[:limit]
-        missing_from_indexed.sort()
-        only_left_keys = remaining_indexed_keys if index_left else missing_from_indexed
-        only_right_keys = missing_from_indexed if index_left else remaining_indexed_keys
-    else:
-        only_left_keys = []
-        only_right_keys = []
-
-    only_left_count = remaining_indexed_count if index_left else missing_from_indexed_count
-    only_right_count = missing_from_indexed_count if index_left else remaining_indexed_count
 
     return {
         "row_count_delta": left_reader.num_rows - right_reader.num_rows,
-        "only_left_count": only_left_count,
-        "only_right_count": only_right_count,
-        "changed_count": changed_count,
+        "only_left_count": row_diff["only_left_count"],
+        "only_right_count": row_diff["only_right_count"],
+        "changed_count": row_diff["changed_count"],
         "schema_only_left": (
             [] if summary_only else [{"column": name} for name in schema_only_left[:limit]]
         ),
@@ -585,9 +899,9 @@ def diff_files(
             [] if summary_only else [{"column": name} for name in schema_only_right[:limit]]
         ),
         "schema_type_mismatches": [] if summary_only else schema_type_mismatches[:limit],
-        "only_left": [{"key": key if len(key) > 1 else key[0]} for key in only_left_keys[:limit]],
-        "only_right": [{"key": key if len(key) > 1 else key[0]} for key in only_right_keys[:limit]],
-        "changed_rows": [] if summary_only else changed_rows[:limit],
+        "only_left": [] if summary_only else row_diff["only_left"],
+        "only_right": [] if summary_only else row_diff["only_right"],
+        "changed_rows": [] if summary_only else row_diff["changed_rows"],
     }
 
 
@@ -596,6 +910,8 @@ def merge_files(
     output_path: Union[str, Path],
     force: bool = False,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    delimiter: str = ",",
+    sheet: Optional[str] = None,
 ) -> int:
     """Merge multiple compatible inputs into a single output file."""
     if len(input_paths) == 0:
@@ -608,7 +924,11 @@ def merge_files(
         else:
             raise FileExistsError(f"Output file already exists: {output_path}")
 
-    readers = [MultiFormatReader(str(path)) for path in input_paths]
+    readers = [
+        MultiFormatReader(str(path), delimiter=delimiter, sheet=sheet) for path in input_paths
+    ]
+    for reader in readers:
+        reader._ensure_xlsx_types_for_full_read()
     schemas = [reader.schema for reader in readers]
     try:
         unified_schema = pa.unify_schemas(schemas)

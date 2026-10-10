@@ -12,9 +12,6 @@ import pyarrow.compute as pc
 
 FAST_PATH_ROWS_MULTIPLIER = 10
 
-# Maximum unique values tracked per non-numeric column for cardinality/top-N stats.
-MAX_CARDINALITY_TRACK = 10_000
-
 
 @dataclass
 class _InputMetadata:
@@ -23,6 +20,7 @@ class _InputMetadata:
     headers: tuple[str, ...]
     schema: pa.Schema
     num_rows: Optional[int] = None
+    schema_complete: bool = False
 
 
 def _validate_preview_params(n: int, schema: pa.Schema, columns: Optional[List[str]]) -> None:
@@ -169,45 +167,6 @@ def _is_categorical_type(arrow_type: pa.DataType) -> bool:
     )
 
 
-def _compute_table_stats(table: pa.Table, limit: int = 50, top_n: int = 5) -> List[Dict[str, Any]]:
-    """Compute column statistics for a materialized Arrow table."""
-    stats_rows: List[Dict[str, Any]] = []
-    for field in table.schema:
-        column = table[field.name]
-        null_count = int(column.null_count)
-        count = len(column) - null_count
-        row: Dict[str, Any] = {
-            "name": field.name,
-            "type": str(field.type),
-            "count": count,
-            "null_count": null_count,
-            "min": None,
-            "max": None,
-            "mean": None,
-            "cardinality": None,
-            "top_values": None,
-        }
-        if count > 0 and _is_numeric_type(field.type):
-            row["min"] = pc.min(column).as_py()
-            row["max"] = pc.max(column).as_py()
-            mean_val = pc.mean(column)
-            row["mean"] = None if mean_val is None else mean_val.as_py()
-        elif count > 0 and _is_categorical_type(field.type):
-            vc = pc.value_counts(column)
-            values_list = vc.field("values").to_pylist()
-            counts_list = vc.field("counts").to_pylist()
-            value_map: Dict[str, int] = {
-                (str(v) if v is not None else ""): int(c) for v, c in zip(values_list, counts_list)
-            }
-            row["cardinality"] = len(value_map)
-            sorted_values = sorted(value_map.items(), key=lambda x: x[1], reverse=True)
-            row["top_values"] = [{"value": v, "count": c} for v, c in sorted_values[:top_n]]
-        stats_rows.append(row)
-        if len(stats_rows) >= limit:
-            break
-    return stats_rows
-
-
 def _compute_stats_from_batches(
     batches: Iterable[pa.RecordBatch],
     schema: pa.Schema,
@@ -234,7 +193,6 @@ def _compute_stats_from_batches(
             "_numeric": is_numeric,
             "_categorical": is_categorical,
             "_value_counts": {} if is_categorical else None,
-            "_cardinality_capped": False,
         }
 
     for batch in batches:
@@ -260,15 +218,11 @@ def _compute_stats_from_batches(
                 values_list = vc.field("values").to_pylist()
                 counts_list = vc.field("counts").to_pylist()
                 value_counts = state["_value_counts"]
-                for v, c in zip(values_list, counts_list):
-                    key = str(v) if v is not None else ""
-                    if key in value_counts:
-                        value_counts[key] += int(c)
-                    elif not state["_cardinality_capped"]:
-                        if len(value_counts) >= MAX_CARDINALITY_TRACK:
-                            state["_cardinality_capped"] = True
-                        else:
-                            value_counts[key] = int(c)
+                for value, count in zip(values_list, counts_list):
+                    if value is None:
+                        continue
+                    key = str(value)
+                    value_counts[key] = value_counts.get(key, 0) + int(count)
 
     results = []
     for field in tracked_fields:
@@ -277,13 +231,12 @@ def _compute_stats_from_batches(
             state["mean"] = state["_sum"] / state["count"]
         if state["_categorical"] and state["_value_counts"] is not None:
             vc_map = state["_value_counts"]
-            cardinality = len(vc_map)
-            state["cardinality"] = (
-                f">{MAX_CARDINALITY_TRACK}" if state["_cardinality_capped"] else cardinality
-            )
-            sorted_values = sorted(vc_map.items(), key=lambda x: x[1], reverse=True)
-            state["top_values"] = [{"value": v, "count": c} for v, c in sorted_values[:top_n]]
-        for key in ("_sum", "_numeric", "_categorical", "_value_counts", "_cardinality_capped"):
+            state["cardinality"] = len(vc_map)
+            sorted_values = sorted(vc_map.items(), key=lambda item: item[1], reverse=True)
+            state["top_values"] = [
+                {"value": value, "count": count} for value, count in sorted_values[:top_n]
+            ]
+        for key in ("_sum", "_numeric", "_categorical", "_value_counts"):
             del state[key]
         results.append(state)
     return results

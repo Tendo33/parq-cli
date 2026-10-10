@@ -1,5 +1,5 @@
 """
-parq-cli: A powerful command-line tool for inspecting and analyzing Apache Parquet files.
+parq-cli: A command-line tool for inspecting Parquet, CSV, TSV, and XLSX files.
 """
 
 __author__ = "SimonSun"

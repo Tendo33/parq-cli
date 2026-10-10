@@ -6,7 +6,7 @@ Public re-exports for backward compatibility: code that imports
 """
 
 from parq.formats._parquet import ParquetReader
-from parq.formats._common import FAST_PATH_ROWS_MULTIPLIER, MAX_CARDINALITY_TRACK
+from parq.formats._common import FAST_PATH_ROWS_MULTIPLIER
 
 SUPPORTED_INPUT_FORMATS = {".parquet", ".csv", ".xlsx", ".tsv"}
 
@@ -14,5 +14,4 @@ __all__ = [
     "ParquetReader",
     "SUPPORTED_INPUT_FORMATS",
     "FAST_PATH_ROWS_MULTIPLIER",
-    "MAX_CARDINALITY_TRACK",
 ]

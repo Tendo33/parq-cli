@@ -5,7 +5,7 @@
 ### 1. 克隆项目
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Tendo33/parq-cli.git
 cd parq-cli
 ```
 
@@ -118,18 +118,15 @@ ruff check parq tests
 ruff check --fix parq tests
 ```
 
-### 类型检查（可选）
+### 检查门
 
-```bash
-pip install mypy
-mypy parq
-```
+仓库的检查门是 Ruff 和 pytest。当前没有配置 mypy，CI 也不运行它。
 
 ## 📋 常见问题
 
 ### Q: 如何处理大文件？
 
-A: Parquet 文件会尽量利用元数据和 row group 做更高效的读取；CSV 会按批次流式处理，XLSX 会按行增量处理，因此预览、计数和分割都不再需要先整表载入内存。对于超大数据集，Parquet 仍然会有更好的整体吞吐。
+A: Parquet 用文件元数据和 row group，不必先读完全部数据。CSV 按批次流式处理。XLSX 的 `schema` 和较短的 `head` 只采样前 1000 行；`count`、`tail`、`stats`、`convert`、`split`、`merge` 会把选中的工作表解析一次并放在内存里复用。反复处理大文件时，先转成 Parquet 吞吐更好。
 
 ### Q: 空文件会怎么处理？
 

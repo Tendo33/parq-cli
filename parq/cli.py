@@ -31,6 +31,10 @@ class _AppState:
 app = typer.Typer(
     name="parq",
     help="A powerful command-line tool for inspecting tabular files",
+    epilog=(
+        "--output, --delimiter, and --sheet work before a subcommand and on the subcommand. "
+        "When both are set, the value on the subcommand wins."
+    ),
     add_completion=False,
 )
 
@@ -54,6 +58,53 @@ def _get_formatter(ctx: typer.Context) -> Any:
 def _get_state(ctx: typer.Context) -> _AppState:
     """Return the _AppState stored in the root context."""
     return ctx.find_root().obj or _AppState()
+
+
+# Command-level copies of the root options. Defaults stay None so an omitted
+# flag does not clobber a value passed before the subcommand.
+_CommandOutputFormat = Annotated[
+    Optional[OutputFormat],
+    typer.Option(
+        "--output",
+        "-o",
+        help="Output format: rich, plain, or json",
+        show_default=False,
+    ),
+]
+_CommandDelimiter = Annotated[
+    Optional[str],
+    typer.Option(
+        "--delimiter",
+        "-d",
+        help="Field delimiter for CSV/TSV input",
+        show_default=False,
+    ),
+]
+_CommandSheet = Annotated[
+    Optional[str],
+    typer.Option(
+        "--sheet",
+        help="XLSX sheet name or 0-based index. A value of only digits is an index.",
+        show_default=False,
+    ),
+]
+
+
+def _apply_command_options(
+    ctx: typer.Context,
+    output_format: Optional[OutputFormat],
+    delimiter: Optional[str],
+    sheet: Optional[str],
+) -> _AppState:
+    """Let flags after the subcommand override the same flags placed before it."""
+    state = _get_state(ctx)
+    if output_format is not None:
+        state.output_format = output_format
+    if delimiter is not None:
+        state.delimiter = delimiter
+    if sheet is not None:
+        state.sheet = sheet
+    return state
 
 
 def _get_reader(file_path: str, state: Optional[_AppState] = None) -> Any:
@@ -114,7 +165,10 @@ def main(
         Optional[str],
         typer.Option(
             "--sheet",
-            help="XLSX sheet name or 0-based index to read (default: active sheet)",
+            help=(
+                "XLSX sheet name or 0-based index to read (default: active sheet). "
+                "A value of only digits is an index."
+            ),
         ),
     ] = None,
 ) -> None:
@@ -138,13 +192,17 @@ def main(
 @app.command()
 def meta(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .tsv, .xlsx)")],
     fast: Annotated[
         bool,
         typer.Option("--fast", help="Skip expensive fields such as full row counts where possible"),
     ] = False,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Display metadata information of a tabular file."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file), _get_state(ctx))
@@ -156,9 +214,13 @@ def meta(
 @app.command()
 def schema(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .tsv, .xlsx)")],
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Display the schema of a tabular file."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file), _get_state(ctx))
@@ -170,14 +232,18 @@ def schema(
 @app.command()
 def head(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .tsv, .xlsx)")],
     n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
     columns: Annotated[
         Optional[str],
         typer.Option("--columns", "-c", help="Comma-separated list of columns to display"),
     ] = None,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Display the first N rows of a tabular file."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file), _get_state(ctx))
@@ -190,14 +256,18 @@ def head(
 @app.command()
 def tail(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .tsv, .xlsx)")],
     n: Annotated[int, typer.Option("-n", help="Number of rows to display")] = 5,
     columns: Annotated[
         Optional[str],
         typer.Option("--columns", "-c", help="Comma-separated list of columns to display"),
     ] = None,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Display the last N rows of a tabular file."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file), _get_state(ctx))
@@ -210,9 +280,13 @@ def tail(
 @app.command()
 def count(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .tsv, .xlsx)")],
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Display the total row count of a tabular file."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file), _get_state(ctx))
@@ -224,7 +298,7 @@ def count(
 @app.command()
 def split(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to source file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to source file (.parquet, .csv, .tsv, .xlsx)")],
     file_count: Annotated[
         Optional[int],
         typer.Option("--file-count", "-f", help="Number of output files"),
@@ -241,10 +315,13 @@ def split(
         bool,
         typer.Option("--force", "-F", help="Overwrite existing output files"),
     ] = False,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Split a source file into multiple files."""
 
-    state = _get_state(ctx)
+    state = _apply_command_options(ctx, output_format, delimiter, sheet)
     formatter = _get_formatter(ctx)
     try:
         if file_count is None and record_count is None:
@@ -330,7 +407,7 @@ def split(
 @app.command()
 def stats(
     ctx: typer.Context,
-    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .xlsx)")],
+    file: Annotated[Path, typer.Argument(help="Path to data file (.parquet, .csv, .tsv, .xlsx)")],
     columns: Annotated[
         Optional[str],
         typer.Option("--columns", "-c", help="Comma-separated list of columns to summarize"),
@@ -340,8 +417,12 @@ def stats(
         int,
         typer.Option("--top-n", help="Top N most frequent values to show for string columns"),
     ] = 5,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Display simple per-column statistics."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         reader = _get_reader(str(file), _get_state(ctx))
@@ -355,7 +436,7 @@ def stats(
 @app.command()
 def convert(
     ctx: typer.Context,
-    source: Annotated[Path, typer.Argument(help="Path to source file (.parquet, .csv, .xlsx)")],
+    source: Annotated[Path, typer.Argument(help="Path to source file (.parquet, .csv, .tsv, .xlsx)")],
     output: Annotated[Path, typer.Argument(help="Destination path; suffix controls output format")],
     columns: Annotated[
         Optional[str],
@@ -365,10 +446,16 @@ def convert(
         bool,
         typer.Option("--force", "-F", help="Overwrite existing output file"),
     ] = False,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
-    """Convert one supported input file to another supported output format."""
+    """Convert one supported input file to another supported output format.
 
-    state = _get_state(ctx)
+    --output / -o selects rich, plain, or json. The destination file is the OUTPUT argument.
+    """
+
+    state = _apply_command_options(ctx, output_format, delimiter, sheet)
     formatter = _get_formatter(ctx)
 
     try:
@@ -434,8 +521,8 @@ def convert(
 @app.command()
 def diff(
     ctx: typer.Context,
-    left: Annotated[Path, typer.Argument(help="Left input file (.parquet or .csv)")],
-    right: Annotated[Path, typer.Argument(help="Right input file (.parquet or .csv)")],
+    left: Annotated[Path, typer.Argument(help="Left input file (.parquet, .csv, or .tsv)")],
+    right: Annotated[Path, typer.Argument(help="Right input file (.parquet, .csv, or .tsv)")],
     key: Annotated[str, typer.Option("--key", help="Comma-separated key columns for row matching")],
     columns: Annotated[
         Optional[str],
@@ -446,12 +533,17 @@ def diff(
         bool,
         typer.Option("--summary-only", help="Return counts only without sample payloads"),
     ] = False,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Compare two tabular files using one or more key columns."""
+    _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
         from parq.reader import diff_files
 
+        state = _get_state(ctx)
         result = diff_files(
             left,
             right,
@@ -459,6 +551,8 @@ def diff(
             columns=_parse_column_list(columns),
             limit=limit,
             summary_only=summary_only,
+            delimiter=state.delimiter,
+            sheet=state.sheet,
         )
         formatter.print_diff_result(result)
 
@@ -476,9 +570,13 @@ def merge(
         bool,
         typer.Option("--force", "-F", help="Overwrite existing output file"),
     ] = False,
+    output_format: _CommandOutputFormat = None,
+    delimiter: _CommandDelimiter = None,
+    sheet: _CommandSheet = None,
 ) -> None:
     """Merge multiple compatible input files into one output file."""
 
+    _apply_command_options(ctx, output_format, delimiter, sheet)
     formatter = _get_formatter(ctx)
     try:
         import time
@@ -519,10 +617,21 @@ def merge(
                     progress.update(task, completed=current)
 
                 total_rows = merge_files(
-                    input_files, output, force=force, progress_callback=update_progress
+                    input_files,
+                    output,
+                    force=force,
+                    progress_callback=update_progress,
+                    delimiter=state.delimiter,
+                    sheet=state.sheet,
                 )
         else:
-            total_rows = merge_files(input_files, output, force=force)
+            total_rows = merge_files(
+                input_files,
+                output,
+                force=force,
+                delimiter=state.delimiter,
+                sheet=state.sheet,
+            )
 
         formatter.print_merge_result(input_files, output, total_rows, time.time() - start_time)
     except typer.Exit:

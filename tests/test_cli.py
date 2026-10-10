@@ -657,3 +657,150 @@ class TestCLI:
 
         result = runner.invoke(app, ["--sheet", "NoSuchSheet", "head", str(xlsx_file)])
         assert result.exit_code == 1
+
+    def test_diff_honors_global_delimiter(self, tmp_path):
+        """diff should parse both inputs with the global delimiter."""
+        import json
+
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        left.write_text("id;name\n1;alice\n2;bob\n", encoding="utf-8")
+        right.write_text("id;name\n1;alice\n2;carol\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["--delimiter", ";", "--output", "json", "diff", str(left), str(right), "--key", "id"],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["changed_count"] == 1
+        assert data["only_left_count"] == 0
+        assert data["only_right_count"] == 0
+
+    def test_merge_honors_global_delimiter(self, tmp_path):
+        """merge should keep columns parsed with the global delimiter."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        output_path = tmp_path / "merged.csv"
+        left.write_text("id;name\n1;alice\n", encoding="utf-8")
+        right.write_text("id;name\n2;bob\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "--delimiter",
+                ";",
+                "--output",
+                "plain",
+                "merge",
+                str(left),
+                str(right),
+                str(output_path),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        merged = output_path.read_text(encoding="utf-8")
+        assert "id;name" not in merged
+        assert "alice" in merged
+        assert "bob" in merged
+
+    def test_merge_honors_global_sheet(self, tmp_path):
+        """merge should read the selected XLSX sheet instead of the active sheet."""
+        openpyxl = pytest.importorskip("openpyxl")
+        source = tmp_path / "book.xlsx"
+        output_path = tmp_path / "merged.csv"
+        workbook = openpyxl.Workbook()
+        first = workbook.active
+        first.title = "First"
+        first.append(["id", "name"])
+        first.append([1, "active"])
+        second = workbook.create_sheet("Second")
+        second.append(["id", "name"])
+        second.append([2, "chosen"])
+        workbook.save(source)
+
+        result = runner.invoke(
+            app,
+            ["--sheet", "Second", "--output", "plain", "merge", str(source), str(output_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        merged = output_path.read_text(encoding="utf-8")
+        assert "chosen" in merged
+        assert "active" not in merged
+
+    def test_convert_to_tsv_from_cli(self, sample_csv_file, tmp_path):
+        """convert should accept a .tsv destination."""
+        output_path = tmp_path / "out.tsv"
+        result = runner.invoke(
+            app, ["--output", "plain", "convert", str(sample_csv_file), str(output_path)]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert output_path.exists()
+        header = output_path.read_text(encoding="utf-8").splitlines()[0]
+        assert "\t" in header
+
+    def test_shared_options_work_on_the_subcommand(self, sample_parquet_file, tmp_path):
+        """Flags documented after the subcommand should be accepted."""
+        import json
+
+        meta = runner.invoke(app, ["meta", str(sample_parquet_file), "--output", "json"])
+        assert meta.exit_code == 0, meta.output
+        assert json.loads(meta.output)["num_rows"] >= 0
+
+        pipe_file = tmp_path / "data.csv"
+        pipe_file.write_text("id|name\n1|alice\n", encoding="utf-8")
+        head = runner.invoke(app, ["head", "--delimiter", "|", str(pipe_file), "--output", "json"])
+        assert head.exit_code == 0, head.output
+        assert json.loads(head.output)["rows"][0]["name"] == "alice"
+
+        openpyxl = pytest.importorskip("openpyxl")
+        xlsx_file = tmp_path / "multi.xlsx"
+        workbook = openpyxl.Workbook()
+        first = workbook.active
+        first.title = "Sheet1"
+        first.append(["id"])
+        first.append(["first"])
+        second = workbook.create_sheet("Sheet2")
+        second.append(["id"])
+        second.append(["second"])
+        workbook.save(xlsx_file)
+        sheet = runner.invoke(app, ["head", "--sheet", "Sheet2", str(xlsx_file)])
+        assert sheet.exit_code == 0, sheet.output
+        assert "second" in sheet.output
+        assert "first" not in sheet.output
+
+    def test_subcommand_option_overrides_root_option(self, sample_parquet_file):
+        """A flag on the subcommand wins over the same flag before it."""
+        result = runner.invoke(
+            app,
+            ["--output", "json", "meta", str(sample_parquet_file), "--output", "plain"],
+        )
+        assert result.exit_code == 0, result.output
+        assert not result.output.lstrip().startswith("{")
+        assert "num_rows" in result.output
+
+    def test_convert_output_flag_selects_display_format(self, sample_csv_file, tmp_path):
+        """convert --output selects rich/plain/json; OUTPUT remains the destination path."""
+        import json
+
+        output_path = tmp_path / "out.parquet"
+        result = runner.invoke(
+            app,
+            ["convert", str(sample_csv_file), str(output_path), "--output", "json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["total_rows"] >= 0
+        assert output_path.exists()
+
+    def test_head_help_lists_shared_options(self):
+        """Subcommand help should show options that used to exist only on the root command."""
+        result = runner.invoke(app, ["head", "--delimiter", ";", "--sheet", "1", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--output" in result.output
+        assert "--delimiter" in result.output
+        assert "--sheet" in result.output
