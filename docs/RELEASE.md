@@ -83,9 +83,8 @@ python scripts/bump_version.py --version 0.1.1 --yes
 
 **检查步骤:**
 1. 查看 Actions 日志: https://github.com/Tendo33/parq-cli/actions
-2. 确认 PyPI Trusted Publisher 指向仓库 `Tendo33/parq-cli`、workflow `publish.yml`、environment `pypi`
-3. 确认 GitHub 仓库已创建名为 `pypi` 的 Environment
-4. 运行本地检查: `python scripts/check_version.py`
+2. 确认仓库 Secret `PYPI_API_TOKEN` 仍然有效
+3. 运行本地检查: `python scripts/check_version.py`
 
 ## 🎯 手动发布 (不推荐)
 
@@ -115,15 +114,9 @@ git push origin v0.1.2
 - **PyPI 页面:** https://pypi.org/project/parq-cli/
 - **GitHub Releases:** https://github.com/Tendo33/parq-cli/releases
 
-## PyPI Trusted Publishing
+## PyPI 上传
 
-发布 job 使用 GitHub OIDC，不再读取 `PYPI_API_TOKEN`。第一次启用前需要在两边各配一次：
-
-1. 打开 PyPI 项目 `parq-cli` → Publishing → Add a new pending publisher。
-2. Owner 填 `Tendo33`，Repository 填 `parq-cli`，Workflow 填 `publish.yml`，Environment 填 `pypi`。
-3. 在 GitHub 仓库 Settings → Environments 创建名为 `pypi` 的 environment。
-4. 用一个 `v*` tag 触发 `.github/workflows/publish.yml`。从普通分支手动运行会在上传前失败。
-5. 确认发布成功后，删除仓库里旧的 `PYPI_API_TOKEN`。
+发布 job 在 `v*` tag 上使用仓库 Secret `PYPI_API_TOKEN` 上传。从普通分支手动运行会在上传前失败。GitHub 上已经有一个名为 `pypi` 的 environment，当前 workflow 不依赖它。
 
 ## 💡 最佳实践
 

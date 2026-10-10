@@ -157,7 +157,7 @@ git push origin :refs/tags/v0.1.1
 
 1. 检查 Actions 日志
 2. 确认版本号没有冲突
-3. 确认 PyPI Trusted Publisher 与 GitHub `pypi` environment 已配置，见 [docs/RELEASE.md](../docs/RELEASE.md)
+3. 确认仓库 Secret `PYPI_API_TOKEN` 仍然有效，见 [docs/RELEASE.md](../docs/RELEASE.md)
 
 ## 📝 最佳实践
 

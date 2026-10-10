@@ -45,14 +45,12 @@ def test_test_workflow_installs_xlsx_support_for_public_feature_coverage():
     assert 'pip install -e ".[dev,xlsx]"' in content
 
 
-def test_publish_workflow_uses_trusted_publishing():
-    """Release uploads should use PyPI Trusted Publishing instead of a long-lived token."""
+def test_publish_workflow_uses_repository_pypi_token():
+    """Release uploads use the existing repository token and run only from a version tag."""
     workflow_path = Path(".github/workflows/publish.yml")
     content = workflow_path.read_text(encoding="utf-8")
 
     assert "pypa/gh-action-pypi-publish@release/v1" in content
-    assert "id-token: write" in content
-    assert "environment:" in content
-    assert "name: pypi" in content
-    assert "PYPI_API_TOKEN" not in content
+    assert "secrets.PYPI_API_TOKEN" in content
+    assert "startsWith(github.ref, 'refs/tags/v')" in content
     assert "twine upload" not in content
