@@ -97,6 +97,11 @@ class MultiFormatReader:
         if suffix == ".parquet":
             self._parquet_reader = ParquetReader(file_path)
 
+    def close(self) -> None:
+        """Release file handles owned by this reader."""
+        if self._parquet_reader is not None:
+            self._parquet_reader.close()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -753,41 +758,52 @@ def _diff_rows_partitioned(
             )
 
         parts = []
-        for bucket in range(num_buckets):
-            left_path = left_paths[bucket]
-            right_path = right_paths[bucket]
-            if left_path is None and right_path is None:
-                continue
-            bucket_left = MultiFormatReader(str(left_path)) if left_path is not None else None
-            bucket_right = MultiFormatReader(str(right_path)) if right_path is not None else None
-            bucket_rows = max(
-                0 if bucket_left is None else bucket_left.num_rows,
-                0 if bucket_right is None else bucket_right.num_rows,
-            )
-            if bucket_rows >= parent_rows and bucket_rows > DIFF_MEMORY_ROW_LIMIT:
-                part = _diff_rows_in_memory(
-                    bucket_left,
-                    bucket_right,
-                    key_columns,
-                    selected_columns,
-                    comparable_columns,
-                    limit,
-                    summary_only,
+        open_readers: List[MultiFormatReader] = []
+        try:
+            for bucket in range(num_buckets):
+                left_path = left_paths[bucket]
+                right_path = right_paths[bucket]
+                if left_path is None and right_path is None:
+                    continue
+                bucket_left = MultiFormatReader(str(left_path)) if left_path is not None else None
+                bucket_right = (
+                    MultiFormatReader(str(right_path)) if right_path is not None else None
                 )
-            else:
-                part = _diff_rows_bounded(
-                    bucket_left,
-                    bucket_right,
-                    key_columns,
-                    selected_columns,
-                    comparable_columns,
-                    limit,
-                    summary_only,
-                    salt=salt + 1 + bucket,
-                    depth=depth + 1,
+                if bucket_left is not None:
+                    open_readers.append(bucket_left)
+                if bucket_right is not None:
+                    open_readers.append(bucket_right)
+                bucket_rows = max(
+                    0 if bucket_left is None else bucket_left.num_rows,
+                    0 if bucket_right is None else bucket_right.num_rows,
                 )
-            parts.append(part)
-        return _merge_row_diffs(parts, limit, summary_only)
+                if bucket_rows >= parent_rows and bucket_rows > DIFF_MEMORY_ROW_LIMIT:
+                    part = _diff_rows_in_memory(
+                        bucket_left,
+                        bucket_right,
+                        key_columns,
+                        selected_columns,
+                        comparable_columns,
+                        limit,
+                        summary_only,
+                    )
+                else:
+                    part = _diff_rows_bounded(
+                        bucket_left,
+                        bucket_right,
+                        key_columns,
+                        selected_columns,
+                        comparable_columns,
+                        limit,
+                        summary_only,
+                        salt=salt + 1 + bucket,
+                        depth=depth + 1,
+                    )
+                parts.append(part)
+            return _merge_row_diffs(parts, limit, summary_only)
+        finally:
+            for open_reader in open_readers:
+                open_reader.close()
 
 
 def _diff_rows_bounded(

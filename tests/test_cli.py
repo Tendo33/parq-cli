@@ -799,8 +799,12 @@ class TestCLI:
 
     def test_head_help_lists_shared_options(self):
         """Subcommand help should show options that used to exist only on the root command."""
+        import re
+
         result = runner.invoke(app, ["head", "--delimiter", ";", "--sheet", "1", "--help"])
         assert result.exit_code == 0, result.output
-        assert "--output" in result.output
-        assert "--delimiter" in result.output
-        assert "--sheet" in result.output
+        plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", result.output)
+        plain = re.sub(r"\s+", "", plain)
+        assert "--output" in plain
+        assert "--delimiter" in plain
+        assert "--sheet" in plain

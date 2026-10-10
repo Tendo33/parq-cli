@@ -34,6 +34,16 @@ class ParquetReader:
         self.last_split_total_rows: Optional[int] = None
         self.last_write_total_rows: Optional[int] = None
 
+    def close(self) -> None:
+        """Release the Parquet file handle. Required before deleting the file on Windows."""
+        parquet_file = self._parquet_file
+        if parquet_file is None:
+            return
+        close = getattr(parquet_file, "close", None)
+        if close is not None:
+            close()
+        self._parquet_file = None
+
     @property
     def metadata(self) -> pq.FileMetaData:
         """Get file metadata."""
