@@ -43,7 +43,7 @@ dev = [
     "build>=1.2.0",
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
-    "ruff>=0.7.0",
+    "ruff==0.14.0",
     "twine>=5.1.0",
     "vulture>=2.14",
 ]

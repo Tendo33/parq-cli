@@ -572,7 +572,7 @@ wheels = [
 
 [[package]]
 name = "parq-cli"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "pyarrow" },
@@ -603,7 +603,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-calamine", marker = "extra == 'xlsx'", specifier = ">=0.8.0" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.1.0" },
     { name = "typer", specifier = ">=0.15.0" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
