@@ -129,18 +129,20 @@ def _run_with_error_handling(
     operation: Callable[[Any], None],
     *,
     generic_error_prefix: str,
+    file_path: Optional[Path] = None,
 ) -> None:
     """Execute a CLI operation with consistent error handling."""
+    path_text = str(file_path) if file_path is not None else None
     formatter = _get_formatter(ctx)
     try:
         operation(formatter)
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError, FileExistsError) as e:
-        formatter.print_error(str(e))
+        formatter.print_error(str(e), file_path=path_text)
         raise typer.Exit(code=1) from e
     except Exception as e:
-        formatter.print_error(f"{generic_error_prefix}: {e}")
+        formatter.print_error(f"{generic_error_prefix}: {e}", file_path=path_text)
         raise typer.Exit(code=1) from e
 
 
@@ -208,7 +210,9 @@ def meta(
         reader = _get_reader(str(file), _get_state(ctx))
         formatter.print_metadata(reader.get_metadata_dict(fast=fast))
 
-    _run_with_error_handling(ctx, operation, generic_error_prefix="Failed to read file")
+    _run_with_error_handling(
+        ctx, operation, generic_error_prefix="Failed to read file", file_path=file
+    )
 
 
 @app.command()
@@ -226,7 +230,9 @@ def schema(
         reader = _get_reader(str(file), _get_state(ctx))
         formatter.print_schema(reader.get_schema_info())
 
-    _run_with_error_handling(ctx, operation, generic_error_prefix="Failed to read file")
+    _run_with_error_handling(
+        ctx, operation, generic_error_prefix="Failed to read file", file_path=file
+    )
 
 
 @app.command()
@@ -250,7 +256,9 @@ def head(
         table = reader.read_head(n, columns=_parse_column_list(columns))
         formatter.print_table(table, f"First {n} Rows")
 
-    _run_with_error_handling(ctx, operation, generic_error_prefix="Failed to read file")
+    _run_with_error_handling(
+        ctx, operation, generic_error_prefix="Failed to read file", file_path=file
+    )
 
 
 @app.command()
@@ -274,7 +282,9 @@ def tail(
         table = reader.read_tail(n, columns=_parse_column_list(columns))
         formatter.print_table(table, f"Last {n} Rows")
 
-    _run_with_error_handling(ctx, operation, generic_error_prefix="Failed to read file")
+    _run_with_error_handling(
+        ctx, operation, generic_error_prefix="Failed to read file", file_path=file
+    )
 
 
 @app.command()
@@ -292,7 +302,9 @@ def count(
         reader = _get_reader(str(file), _get_state(ctx))
         formatter.print_count(reader.num_rows)
 
-    _run_with_error_handling(ctx, operation, generic_error_prefix="Failed to read file")
+    _run_with_error_handling(
+        ctx, operation, generic_error_prefix="Failed to read file", file_path=file
+    )
 
 
 @app.command()
@@ -397,10 +409,10 @@ def split(
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError, FileExistsError) as e:
-        formatter.print_error(str(e))
+        formatter.print_error(str(e), file_path=str(file))
         raise typer.Exit(code=1) from e
     except Exception as e:
-        formatter.print_error(f"Failed to split file: {e}")
+        formatter.print_error(f"Failed to split file: {e}", file_path=str(file))
         raise typer.Exit(code=1) from e
 
 
@@ -430,7 +442,9 @@ def stats(
             reader.get_stats(columns=_parse_column_list(columns), limit=limit, top_n=top_n)
         )
 
-    _run_with_error_handling(ctx, operation, generic_error_prefix="Failed to compute stats")
+    _run_with_error_handling(
+        ctx, operation, generic_error_prefix="Failed to compute stats", file_path=file
+    )
 
 
 @app.command()
@@ -511,10 +525,10 @@ def convert(
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError, FileExistsError) as e:
-        formatter.print_error(str(e))
+        formatter.print_error(str(e), file_path=str(source))
         raise typer.Exit(code=1) from e
     except Exception as e:
-        formatter.print_error(f"Failed to convert file: {e}")
+        formatter.print_error(f"Failed to convert file: {e}", file_path=str(source))
         raise typer.Exit(code=1) from e
 
 

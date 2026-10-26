@@ -4,7 +4,7 @@ import csv
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 
@@ -85,7 +85,9 @@ class PlainOutputFormatter:
         print(count)
 
     @staticmethod
-    def print_error(message: str) -> None:
+    def print_error(message: str, file_path: Optional[str] = None) -> None:
+        if file_path and file_path not in message:
+            message = f"{file_path}: {message}"
         print(f"Error: {message}", file=sys.stderr)
 
     @staticmethod
@@ -208,8 +210,11 @@ class JsonOutputFormatter:
         print(json.dumps({"count": count}))
 
     @staticmethod
-    def print_error(message: str) -> None:
-        print(json.dumps({"error": message}), file=sys.stderr)
+    def print_error(message: str, file_path: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {"error": message}
+        if file_path is not None:
+            payload["file_path"] = file_path
+        print(json.dumps(payload), file=sys.stderr)
 
     @staticmethod
     def print_success(message: str) -> None:

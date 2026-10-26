@@ -5,7 +5,7 @@ Handles pretty-printing of Parquet data and metadata.
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pyarrow as pa
 from rich import box
@@ -157,8 +157,10 @@ class OutputFormatter:
         console.print(panel)
 
     @staticmethod
-    def print_error(message: str) -> None:
-        """Print error message."""
+    def print_error(message: str, file_path: Optional[str] = None) -> None:
+        """Print error message, prefixed with the offending file when known."""
+        if file_path and file_path not in message:
+            message = f"{file_path}: {message}"
         console.print(
             f"[bold red]{_safe_text(chr(0x274C) + ' Error:', 'Error:')}[/bold red] {escape(message)}"
         )

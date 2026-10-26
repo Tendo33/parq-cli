@@ -2,6 +2,7 @@
 Tests for CLI commands.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -808,3 +809,27 @@ class TestCLI:
         assert "--output" in plain
         assert "--delimiter" in plain
         assert "--sheet" in plain
+
+
+def test_json_error_includes_file_path(tmp_path):
+    """Errors in JSON mode carry the offending file path (issue #5)."""
+    bad = tmp_path / "broken.parquet"
+    bad.write_bytes(b"not a parquet file")
+
+    result = runner.invoke(app, ["-o", "json", "meta", str(bad)])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stderr.strip().splitlines()[-1])
+    assert payload["file_path"] == str(bad)
+    assert "error" in payload
+
+
+def test_text_error_mentions_file_path(tmp_path):
+    """Errors in plain mode mention the offending file path (issue #5)."""
+    bad = tmp_path / "broken.parquet"
+    bad.write_bytes(b"not a parquet file")
+
+    result = runner.invoke(app, ["-o", "plain", "head", str(bad)])
+
+    assert result.exit_code == 1
+    assert str(bad) in result.stderr
