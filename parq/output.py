@@ -10,8 +10,11 @@ from typing import Any, Dict, List
 import pyarrow as pa
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
+
+from parq.plain_output import summarize_binary as _summarize_cell
 
 console = Console()
 
@@ -35,6 +38,17 @@ def _supports_text(text: str) -> bool:
 def _safe_text(text: str, fallback: str) -> str:
     """Prefer richer labels when encodable, otherwise use ASCII-safe fallbacks."""
     return text if _supports_text(text) else fallback
+
+
+_MAX_CELL_CHARS = 200
+
+
+def _format_cell(value: Any) -> str:
+    """Render a table cell as markup-safe, length-limited text."""
+    text = str(_summarize_cell(value))
+    if len(text) > _MAX_CELL_CHARS:
+        text = text[: _MAX_CELL_CHARS - 3] + "..."
+    return escape(text)
 
 
 class OutputFormatter:
@@ -123,7 +137,10 @@ class OutputFormatter:
             batch_dict = batch.to_pydict()
             for row_idx in range(len(batch)):
                 table.add_row(
-                    *[str(batch_dict[col_name][row_idx]) for col_name in arrow_table.column_names]
+                    *[
+                        _format_cell(batch_dict[col_name][row_idx])
+                        for col_name in arrow_table.column_names
+                    ]
                 )
 
         console.print(table)
@@ -143,7 +160,7 @@ class OutputFormatter:
     def print_error(message: str) -> None:
         """Print error message."""
         console.print(
-            f"[bold red]{_safe_text(chr(0x274C) + ' Error:', 'Error:')}[/bold red] {message}"
+            f"[bold red]{_safe_text(chr(0x274C) + ' Error:', 'Error:')}[/bold red] {escape(message)}"
         )
 
     @staticmethod

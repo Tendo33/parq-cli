@@ -9,6 +9,19 @@ from typing import Any, Dict, List
 import pyarrow as pa
 
 
+def summarize_binary(value: Any) -> Any:
+    """Replace raw binary payloads (also inside structs/lists) with a short summary."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return f"<binary {len(bytes(value))} bytes>"
+    if isinstance(value, dict):
+        return {key: summarize_binary(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [summarize_binary(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(summarize_binary(item) for item in value)
+    return value
+
+
 class PlainOutputFormatter:
     """Tab-separated plain text output with minimal overhead."""
 
@@ -20,6 +33,10 @@ class PlainOutputFormatter:
     def _normalize_value(value: Any) -> Any:
         if value is None:
             return ""
+        if isinstance(value, (bytes, bytearray, memoryview, dict, list, tuple)):
+            value = summarize_binary(value)
+            if not isinstance(value, str):
+                value = str(value)
         if isinstance(value, str):
             return (
                 value.replace("\\", "\\\\")

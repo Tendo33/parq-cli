@@ -56,3 +56,21 @@ class TestJsonOutputFormatter:
         data = json.loads(capsys.readouterr().out)
         assert len(data["rows"]) == 2
         assert data["rows"][0]["id"] == 1
+
+
+def test_plain_table_summarizes_binary_values(capsys):
+    """Binary cells (issue #4) are summarized instead of dumped in plain mode."""
+    import pyarrow as pa
+
+    payload = b"\x00\x01[/x]" * 10
+    table = pa.table(
+        {
+            "raw": pa.array([payload], type=pa.binary()),
+            "image": pa.array([{"bytes": payload, "path": "a.png"}]),
+        }
+    )
+    PlainOutputFormatter.print_table(table)
+    out = capsys.readouterr().out
+    assert "<binary 60 bytes>" in out
+    assert "a.png" in out
+    assert "\\x00" not in out

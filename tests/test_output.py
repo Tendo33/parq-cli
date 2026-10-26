@@ -73,3 +73,36 @@ def test_print_split_result_renders_existing_files(monkeypatch, tmp_path):
     assert "Output Files" in text
     assert "5 B" in text
     assert "part-001.parquet" not in text
+
+
+def test_print_table_handles_binary_values(monkeypatch):
+    """Binary cells (issue #4) must not be parsed as Rich markup or dumped in full."""
+    import pyarrow as pa
+
+    console = _recording_console()
+    monkeypatch.setattr(output_module, "console", console)
+    payload = b"\x87[/<\x97\xf6]" * 100
+    table = pa.table(
+        {
+            "raw": pa.array([payload], type=pa.binary()),
+            "image": pa.array([{"bytes": payload, "path": "a.png"}]),
+            "label": ["[/bold]"],
+        }
+    )
+
+    OutputFormatter.print_table(table)
+
+    text = console.export_text()
+    assert "<binary 700 bytes>" in text
+    assert "a.png" in text
+    assert "[/bold]" in text
+
+
+def test_print_error_escapes_markup(monkeypatch):
+    """Error messages containing Rich-like tags are printed literally."""
+    console = _recording_console()
+    monkeypatch.setattr(output_module, "console", console)
+
+    OutputFormatter.print_error("closing tag '[/<x]' at position 3")
+
+    assert "[/<x]" in console.export_text()
