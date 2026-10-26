@@ -210,3 +210,6 @@ project_document/
 .history/
 .worktrees/
 worktrees/
+
+# macOS
+.DS_Store
