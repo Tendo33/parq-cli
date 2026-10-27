@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+
+- `merge --force` and `convert` now refuse an output path that is one of the inputs. Previously `--force` deleted that input before reading it.
+- XLSX workbook XML is parsed with `defusedxml` (added to the `xlsx` extra).
+- Table output escapes cell markup and summarizes binary values (#4).
+- Errors include the file path (#5).
+- Dependency security updates: certifi, urllib3, idna, pygments, cryptography, pyarrow.
+
 ## 0.2.1
 
 - `diff` and `merge` honor the global `--delimiter` and `--sheet` options.
