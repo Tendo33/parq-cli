@@ -218,7 +218,7 @@ def _compute_stats_from_batches(
                 values_list = vc.field("values").to_pylist()
                 counts_list = vc.field("counts").to_pylist()
                 value_counts = state["_value_counts"]
-                for value, count in zip(values_list, counts_list):
+                for value, count in zip(values_list, counts_list, strict=True):
                     if value is None:
                         continue
                     key = str(value)

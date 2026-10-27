@@ -6,7 +6,6 @@ Reading uses python-calamine. Writing stays on openpyxl in the chunk writer.
 
 import math
 import zipfile
-import xml.etree.ElementTree as ET
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Iterator, List, Optional
@@ -46,8 +45,22 @@ def _require_calamine() -> Any:
     return python_calamine
 
 
+def _require_defused_element_tree() -> Any:
+    """Import defusedxml lazily; workbook XML is untrusted input."""
+    try:
+        import defusedxml.ElementTree as defused_et
+    except ImportError as e:
+        raise ValueError(
+            "XLSX support requires 'defusedxml'. Install it with: pip install 'parq-cli[xlsx]'"
+        ) from e
+    return defused_et
+
+
 def _active_sheet_index(file_path: Path) -> int:
     """Return the workbook's active sheet index without parsing every cell."""
+    ET = _require_defused_element_tree()
+    from defusedxml import DefusedXmlException
+
     try:
         with zipfile.ZipFile(file_path) as workbook_zip:
             root = ET.fromstring(workbook_zip.read("xl/workbook.xml"))
@@ -55,7 +68,14 @@ def _active_sheet_index(file_path: Path) -> int:
         if view is None:
             return 0
         return int(view.attrib.get("activeTab", "0"))
-    except (KeyError, ValueError, ET.ParseError, zipfile.BadZipFile, OSError):
+    except (
+        KeyError,
+        ValueError,
+        ET.ParseError,
+        DefusedXmlException,
+        zipfile.BadZipFile,
+        OSError,
+    ):
         return 0
 
 
@@ -172,7 +192,7 @@ def _schema_from_types(headers: List[str], inferred_types: List[Optional[pa.Data
     return pa.schema(
         [
             pa.field(name, inferred_type or pa.null(), nullable=True)
-            for name, inferred_type in zip(headers, inferred_types)
+            for name, inferred_type in zip(headers, inferred_types, strict=True)
         ]
     )
 
@@ -275,7 +295,7 @@ def _iter_row_batches(
                     row[idx] if idx < len(row) else None,
                     field,
                 )
-                for column, idx, field in zip(selected_columns, selected_indices, selected_fields)
+                for column, idx, field in zip(selected_columns, selected_indices, selected_fields, strict=True)
             }
         )
         if len(buffered_rows) >= batch_size:
