@@ -419,8 +419,9 @@ class MultiFormatReader:
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> int:
         """Convert the input file to a single supported output file."""
-        self._ensure_xlsx_types_for_full_read()
         output_path = Path(output_path)
+        _reject_output_matching_input(output_path, [self.file_path])
+        self._ensure_xlsx_types_for_full_read()
         if self._parquet_reader is not None:
             rows_written = self._parquet_reader.convert_file(
                 output_path, columns=columns, force=force, progress_callback=progress_callback
@@ -921,6 +922,21 @@ def diff_files(
     }
 
 
+def _reject_output_matching_input(
+    output_path: Path, input_paths: List[Union[str, Path]]
+) -> None:
+    """Refuse to write onto an input file (``--force`` would delete it first)."""
+    if not output_path.exists():
+        return
+    for input_path in input_paths:
+        try:
+            same = output_path.samefile(input_path)
+        except OSError:
+            continue
+        if same:
+            raise ValueError(f"Output file must not be one of the inputs: {output_path}")
+
+
 def merge_files(
     input_paths: List[Union[str, Path]],
     output_path: Union[str, Path],
@@ -934,6 +950,7 @@ def merge_files(
         raise ValueError("At least one input file must be provided")
 
     output_path = Path(output_path)
+    _reject_output_matching_input(output_path, input_paths)
     if output_path.exists():
         if force:
             output_path.unlink()
