@@ -2,6 +2,7 @@
 Chunk writers and streaming split/write utilities for all output formats.
 """
 
+import gc
 import os
 import tempfile
 from pathlib import Path
@@ -22,18 +23,57 @@ def _coerce_output_value(value: Any) -> Any:
     return value
 
 
-def _cleanup_split_files(writer: Any, created_paths: List[Path]) -> None:
-    """Close a writer (if open) and delete staged temp files on failure."""
-    if writer is not None:
+def _release_writer(writer: Any) -> None:
+    """Close a writer. PyArrow's own writer is closed and dropped here.
+
+    On Windows the file stays locked until that object is destroyed, not merely
+    until ``close()`` returns.
+    """
+    if writer is None:
+        return
+    inner = getattr(writer, "_writer", None)
+    if inner is not None:
+        writer._writer = None
         try:
-            writer.close()
+            inner.close()
         except Exception:
             pass
+        del inner
+        return
+    try:
+        writer.close()
+    except Exception:
+        pass
+
+
+def _unlink_output(path: Path) -> None:
+    """Delete a staged file. A second try runs after GC, for Windows file locks."""
+    try:
+        path.unlink()
+        return
+    except FileNotFoundError:
+        return
+    except OSError:
+        pass
+    gc.collect()
+    try:
+        path.unlink()
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _cleanup_split_files(writers: List[Any], created_paths: List[Path]) -> None:
+    """Close writers and delete staged temp files on failure.
+
+    The caller must put its only reference in ``writers`` and then drop its own
+    variable. This function clears that list before deleting the files.
+    """
+    for index in range(len(writers)):
+        _release_writer(writers[index])
+        writers[index] = None
+    gc.collect()
     for path in created_paths:
-        try:
-            path.unlink()
-        except (FileNotFoundError, OSError):
-            pass
+        _unlink_output(path)
 
 
 def _publish_staged_outputs(staged: List[tuple[Path, Path]]) -> None:
@@ -58,7 +98,10 @@ class _CsvChunkWriter:
         self._writer.write(batch)
 
     def close(self) -> None:
-        self._writer.close()
+        writer = self._writer
+        self._writer = None
+        if writer is not None:
+            writer.close()
 
 
 class _XlsxChunkWriter:
@@ -200,7 +243,9 @@ def _split_batches_to_files(
             current_writer = None
         _publish_staged_outputs(staged_outputs)
     except Exception:
-        _cleanup_split_files(current_writer, temp_paths)
+        held_writers = [current_writer]
+        current_writer = None
+        _cleanup_split_files(held_writers, temp_paths)
         raise
 
     return output_files
@@ -272,7 +317,9 @@ def _stream_split_by_record_count(
             raise ValueError("Cannot split empty file")
         _publish_staged_outputs(staged_outputs)
     except Exception:
-        _cleanup_split_files(current_writer, temp_paths)
+        held_writers = [current_writer]
+        current_writer = None
+        _cleanup_split_files(held_writers, temp_paths)
         raise
 
     return [final_path for final_path, _temp_path in staged_outputs], rows_processed
@@ -328,13 +375,7 @@ def _write_batches_to_output(
         os.replace(tmp_path, output_path)
         return rows_written
     except Exception:
-        if writer is not None:
-            try:
-                writer.close()
-            except Exception:
-                pass
-        try:
-            tmp_path.unlink()
-        except (FileNotFoundError, OSError):
-            pass
+        held_writers = [writer]
+        writer = None
+        _cleanup_split_files(held_writers, [tmp_path])
         raise

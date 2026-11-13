@@ -4,7 +4,7 @@
 
 ## 0.2.3
 
-- `merge --force` and `convert --force` replace an existing output file only after the new file is fully written. A schema mismatch or a write error leaves the previous file in place.
+- `merge --force` and `convert --force` replace an existing output file only after the new file is fully written. A schema mismatch or a write error leaves the previous file in place, and the temporary file is removed, including on Windows.
 - `diff` treats NaN as equal to NaN, including when NaN is the key.
 - `diff` and `merge` close Parquet file handles when they finish.
 - JSON table output summarizes binary values, matching rich and plain output.
