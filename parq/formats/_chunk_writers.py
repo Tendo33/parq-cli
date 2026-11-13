@@ -2,6 +2,8 @@
 Chunk writers and streaming split/write utilities for all output formats.
 """
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional
 
@@ -9,6 +11,7 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
+from parq.formats._common import _validate_delimiter
 from parq.formats._xlsx import _require_openpyxl
 
 
@@ -20,7 +23,7 @@ def _coerce_output_value(value: Any) -> Any:
 
 
 def _cleanup_split_files(writer: Any, created_paths: List[Path]) -> None:
-    """Close a writer (if open) and delete any already-created output files on failure."""
+    """Close a writer (if open) and delete staged temp files on failure."""
     if writer is not None:
         try:
             writer.close()
@@ -33,10 +36,17 @@ def _cleanup_split_files(writer: Any, created_paths: List[Path]) -> None:
             pass
 
 
+def _publish_staged_outputs(staged: List[tuple[Path, Path]]) -> None:
+    """Move staged split parts onto their final paths after every part is complete."""
+    for final_path, temp_path in staged:
+        os.replace(temp_path, final_path)
+
+
 class _CsvChunkWriter:
     """Incremental CSV/TSV writer backed by PyArrow CSVWriter."""
 
     def __init__(self, output_path: Path, schema: pa.Schema, delimiter: str = ","):
+        _validate_delimiter(delimiter)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._writer = pacsv.CSVWriter(
             output_path,
@@ -120,11 +130,8 @@ def _validate_output_pattern(output_pattern: str) -> None:
 def _open_validated_output_path(output_pattern: str, index: int, force: bool = False) -> Path:
     """Resolve one output path from a pattern and reject existing targets unless force."""
     output_path = Path(output_pattern % index)
-    if output_path.exists():
-        if force:
-            output_path.unlink()
-        else:
-            raise FileExistsError(f"Output file already exists: {output_path}")
+    if output_path.exists() and not force:
+        raise FileExistsError(f"Output file already exists: {output_path}")
     return output_path
 
 
@@ -137,19 +144,27 @@ def _split_batches_to_files(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     compression: Optional[str] = None,
 ) -> List[Path]:
-    """Stream record batches into split output files with cleanup on failure."""
-    created_output_paths: List[Path] = []
+    """Stream record batches into split output files with cleanup on failure.
+
+    Parts are written beside the destination and moved into place only after every
+    part has been closed, so a failed ``--force`` split leaves existing files alone.
+    """
+    staged_outputs: List[tuple[Path, Path]] = []
+    temp_paths: List[Path] = []
     current_writer: Optional[Any] = None
+
+    def open_staged_writer(final_path: Path) -> Any:
+        temp_path = _temporary_output_path(final_path)
+        temp_paths.append(temp_path)
+        staged_outputs.append((final_path, temp_path))
+        return _open_chunk_writer(temp_path, schema, compression=compression)
 
     try:
         current_file_idx = 0
         current_file_rows = 0
         target_rows_for_current_file = chunk_sizes[current_file_idx]
         rows_processed = 0
-        current_writer = _open_chunk_writer(
-            output_files[current_file_idx], schema, compression=compression
-        )
-        created_output_paths.append(output_files[current_file_idx])
+        current_writer = open_staged_writer(output_files[current_file_idx])
 
         for batch in batches:
             batch_offset = 0
@@ -178,16 +193,14 @@ def _split_batches_to_files(
                     current_file_idx += 1
                     current_file_rows = 0
                     target_rows_for_current_file = chunk_sizes[current_file_idx]
-                    current_writer = _open_chunk_writer(
-                        output_files[current_file_idx], schema, compression=compression
-                    )
-                    created_output_paths.append(output_files[current_file_idx])
+                    current_writer = open_staged_writer(output_files[current_file_idx])
 
         if current_writer is not None:
             current_writer.close()
             current_writer = None
+        _publish_staged_outputs(staged_outputs)
     except Exception:
-        _cleanup_split_files(current_writer, created_output_paths)
+        _cleanup_split_files(current_writer, temp_paths)
         raise
 
     return output_files
@@ -207,7 +220,8 @@ def _stream_split_by_record_count(
         raise ValueError("record_count must be positive")
 
     _validate_output_pattern(output_pattern)
-    created_output_paths: List[Path] = []
+    staged_outputs: List[tuple[Path, Path]] = []
+    temp_paths: List[Path] = []
     current_writer: Optional[Any] = None
     current_rows = 0
     rows_processed = 0
@@ -221,10 +235,12 @@ def _stream_split_by_record_count(
                     output_path = _open_validated_output_path(
                         output_pattern, current_file_idx, force=force
                     )
+                    temp_path = _temporary_output_path(output_path)
+                    temp_paths.append(temp_path)
+                    staged_outputs.append((output_path, temp_path))
                     current_writer = _open_chunk_writer(
-                        output_path, schema, compression=compression
+                        temp_path, schema, compression=compression
                     )
-                    created_output_paths.append(output_path)
                     current_rows = 0
 
                 rows_remaining = record_count - current_rows
@@ -252,13 +268,32 @@ def _stream_split_by_record_count(
         if current_writer is not None:
             current_writer.close()
             current_writer = None
+        if rows_processed == 0:
+            raise ValueError("Cannot split empty file")
+        _publish_staged_outputs(staged_outputs)
     except Exception:
-        _cleanup_split_files(current_writer, created_output_paths)
+        _cleanup_split_files(current_writer, temp_paths)
         raise
 
-    if rows_processed == 0:
-        raise ValueError("Cannot split empty file")
-    return created_output_paths, rows_processed
+    return [final_path for final_path, _temp_path in staged_outputs], rows_processed
+
+
+def _temporary_output_path(output_path: Path) -> Path:
+    """Create an empty temp path next to the destination so replace stays on one filesystem.
+
+    The temp file keeps the destination suffix. Writers choose a format from that suffix.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{output_path.name}.", dir=output_path.parent)
+    os.close(fd)
+    raw_path = Path(tmp_name)
+    if not output_path.suffix:
+        raw_path.unlink()
+        return raw_path
+    temporary_path = raw_path.with_name(raw_path.name + output_path.suffix)
+    raw_path.rename(temporary_path)
+    temporary_path.unlink()
+    return temporary_path
 
 
 def _write_batches_to_output(
@@ -270,31 +305,36 @@ def _write_batches_to_output(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     total_rows: int = 0,
 ) -> int:
-    """Write a batch iterator to a single output file."""
-    if output_path.exists():
-        if force:
-            output_path.unlink()
-        else:
-            raise FileExistsError(f"Output file already exists: {output_path}")
+    """Write a batch iterator to a single output file.
 
-    writer = _open_chunk_writer(output_path, schema, compression=compression)
-    rows_written = 0
+    The destination is replaced only after the temp file is complete, so a failed
+    ``--force`` write leaves the previous file in place.
+    """
+    if output_path.exists() and not force:
+        raise FileExistsError(f"Output file already exists: {output_path}")
+
+    tmp_path = _temporary_output_path(output_path)
+    writer: Any = None
     try:
+        writer = _open_chunk_writer(tmp_path, schema, compression=compression)
+        rows_written = 0
         for batch in batches:
             writer.write_batch(batch)
             rows_written += len(batch)
             if progress_callback is not None:
                 progress_callback(rows_written, total_rows)
+        writer.close()
+        writer = None
+        os.replace(tmp_path, output_path)
+        return rows_written
     except Exception:
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
         try:
-            writer.close()
-        except Exception:
-            pass
-        try:
-            output_path.unlink()
+            tmp_path.unlink()
         except (FileNotFoundError, OSError):
             pass
         raise
-
-    writer.close()
-    return rows_written

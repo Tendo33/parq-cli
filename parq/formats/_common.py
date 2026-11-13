@@ -13,6 +13,12 @@ import pyarrow.compute as pc
 FAST_PATH_ROWS_MULTIPLIER = 10
 
 
+def _validate_delimiter(delimiter: str) -> None:
+    """Reject delimiters PyArrow cannot use as one ASCII field separator."""
+    if len(delimiter) != 1 or not delimiter.isascii() or ord(delimiter) == 0:
+        raise ValueError(f"delimiter must be a single ASCII character, got {delimiter!r}")
+
+
 @dataclass
 class _InputMetadata:
     """Cached input metadata for lazily-scanned non-parquet sources."""
@@ -33,6 +39,7 @@ def _validate_preview_params(n: int, schema: pa.Schema, columns: Optional[List[s
         missing = [c for c in columns if c not in schema.names]
         if missing:
             raise ValueError(f"Columns not found in schema: {missing}")
+        _reject_ambiguous_columns(schema, columns)
 
 
 def _create_empty_table(schema: pa.Schema, columns: Optional[List[str]] = None) -> pa.Table:
@@ -44,10 +51,23 @@ def _create_empty_table(schema: pa.Schema, columns: Optional[List[str]] = None) 
     return pa.Table.from_arrays(arrays, names=names)
 
 
+def _reject_ambiguous_columns(schema: pa.Schema, columns: List[str]) -> None:
+    """Refuse name-based selection when the schema repeats a requested name."""
+    duplicated = [
+        column for column in dict.fromkeys(columns) if schema.names.count(column) > 1
+    ]
+    if duplicated:
+        raise ValueError(
+            "Column names are duplicated and cannot be selected by name: "
+            f"{duplicated}"
+        )
+
+
 def _select_schema(schema: pa.Schema, columns: Optional[List[str]] = None) -> pa.Schema:
     """Return full schema or selected-column schema."""
     if columns is None:
         return schema
+    _reject_ambiguous_columns(schema, columns)
     return pa.schema([schema.field(column) for column in columns])
 
 
@@ -167,6 +187,14 @@ def _is_categorical_type(arrow_type: pa.DataType) -> bool:
     )
 
 
+def _numeric_values_for_stats(array: pa.Array) -> pa.Array:
+    """Drop nulls and NaN so min, max, and mean describe the remaining numbers."""
+    if pa.types.is_floating(array.type):
+        keep = pc.and_(pc.invert(pc.is_null(array)), pc.invert(pc.is_nan(array)))
+        return pc.filter(array, keep)
+    return pc.drop_null(array)
+
+
 def _compute_stats_from_batches(
     batches: Iterable[pa.RecordBatch],
     schema: pa.Schema,
@@ -174,6 +202,10 @@ def _compute_stats_from_batches(
     top_n: int = 5,
 ) -> List[Dict[str, Any]]:
     """Compute column stats incrementally from batches without full materialization."""
+    if limit < 0:
+        raise ValueError(f"limit must be non-negative, got {limit}")
+    if top_n < 0:
+        raise ValueError(f"top_n must be non-negative, got {top_n}")
     tracked_fields = list(schema)[:limit]
     stats: Dict[str, Dict[str, Any]] = {}
     for field in tracked_fields:
@@ -193,6 +225,7 @@ def _compute_stats_from_batches(
             "_numeric": is_numeric,
             "_categorical": is_categorical,
             "_value_counts": {} if is_categorical else None,
+            "_finite": 0,
         }
 
     for batch in batches:
@@ -203,9 +236,13 @@ def _compute_stats_from_batches(
             state["count"] += len(array) - array.null_count
 
             if state["_numeric"] and len(array) > array.null_count:
-                batch_min = pc.min(array).as_py()
-                batch_max = pc.max(array).as_py()
-                batch_sum = pc.sum(array).as_py()
+                numeric_values = _numeric_values_for_stats(array)
+                if len(numeric_values) == 0:
+                    continue
+                batch_min = pc.min(numeric_values).as_py()
+                batch_max = pc.max(numeric_values).as_py()
+                batch_sum = pc.sum(numeric_values).as_py()
+                state["_finite"] += len(numeric_values)
                 if state["min"] is None or (batch_min is not None and batch_min < state["min"]):
                     state["min"] = batch_min
                 if state["max"] is None or (batch_max is not None and batch_max > state["max"]):
@@ -227,8 +264,8 @@ def _compute_stats_from_batches(
     results = []
     for field in tracked_fields:
         state = stats[field.name]
-        if state["_numeric"] and state["count"] > 0:
-            state["mean"] = state["_sum"] / state["count"]
+        if state["_numeric"] and state["_finite"] > 0:
+            state["mean"] = state["_sum"] / state["_finite"]
         if state["_categorical"] and state["_value_counts"] is not None:
             vc_map = state["_value_counts"]
             state["cardinality"] = len(vc_map)
@@ -236,7 +273,7 @@ def _compute_stats_from_batches(
             state["top_values"] = [
                 {"value": value, "count": count} for value, count in sorted_values[:top_n]
             ]
-        for key in ("_sum", "_numeric", "_categorical", "_value_counts"):
-            del state[key]
+        for key in ("_sum", "_numeric", "_categorical", "_value_counts", "_finite"):
+            state.pop(key, None)
         results.append(state)
     return results

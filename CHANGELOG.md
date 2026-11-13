@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+## 0.2.3
+
+- `merge --force` and `convert --force` replace an existing output file only after the new file is fully written. A schema mismatch or a write error leaves the previous file in place.
+- `diff` treats NaN as equal to NaN, including when NaN is the key.
+- `diff` and `merge` close Parquet file handles when they finish.
+- JSON table output summarizes binary values, matching rich and plain output.
+- `split --force` replaces existing part files only after every part is written. A later write error leaves the previous parts in place.
+- Column stats ignore NaN when computing min, max, and mean. Nulls are still counted separately, and NaN stays in the non-null count.
+- An empty, multi-character, or non-ASCII `--delimiter` is rejected with `delimiter must be a single ASCII character` before CSV parsing or writing.
+- `stats --limit`, `stats --top-n`, and `diff --limit` reject negative values instead of slicing from the end. Zero still means an empty result.
+- Selecting a duplicated column name reports that the name cannot be selected, instead of claiming the column does not exist. A unique column in the same file can still be selected.
+- `diff` compares repeated column names by position. A diff that would compare those names by default asks for `--columns` instead of claiming the column does not exist.
+
 ## 0.2.2
 
 - `merge --force` and `convert` now refuse an output path that is one of the inputs. Previously `--force` deleted that input before reading it.

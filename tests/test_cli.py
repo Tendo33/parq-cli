@@ -125,6 +125,24 @@ class TestCLI:
         assert "name" in result.output
         assert "salary" not in result.output
 
+    def test_cli_head_duplicate_column_is_not_missing(self, tmp_path):
+        """A repeated column name is ambiguous, not missing."""
+        csv_file = tmp_path / "dup.csv"
+        csv_file.write_text("id,id,name\n1,2,alice\n", encoding="utf-8")
+
+        duplicate = runner.invoke(
+            app, ["--output", "plain", "head", "--columns", "id", str(csv_file)]
+        )
+        assert duplicate.exit_code == 1
+        assert "duplicated" in duplicate.stderr
+        assert "does not exist" not in duplicate.stderr
+
+        unique = runner.invoke(
+            app, ["--output", "plain", "head", "--columns", "name", str(csv_file)]
+        )
+        assert unique.exit_code == 0
+        assert "alice" in unique.output
+
     def test_cli_head_with_columns_invalid(self, sample_parquet_file):
         """Test head command with invalid column name."""
         result = runner.invoke(app, ["head", "-c", "id,nonexistent", str(sample_parquet_file)])
@@ -568,6 +586,35 @@ class TestCLI:
         assert salary_col["min"] is not None
         assert salary_col["top_values"] is None
 
+    @pytest.mark.parametrize("flag", ["--limit", "--top-n"])
+    def test_stats_rejects_negative_limit_and_top_n(self, sample_parquet_file, flag):
+        """Negative stats bounds must not slice columns or top values from the end."""
+        result = runner.invoke(
+            app,
+            ["--output", "plain", "stats", flag, "-1", str(sample_parquet_file)],
+        )
+        assert result.exit_code == 1
+        assert "non-negative" in result.stderr
+
+    def test_diff_rejects_negative_limit(self, sample_parquet_file):
+        """A negative diff sample limit must not drop rows from the end of the sample."""
+        result = runner.invoke(
+            app,
+            [
+                "--output",
+                "plain",
+                "diff",
+                str(sample_parquet_file),
+                str(sample_parquet_file),
+                "--key",
+                "id",
+                "--limit",
+                "-1",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "non-negative" in result.stderr
+
     def test_stats_top_n_option(self, sample_parquet_file):
         """--top-n should limit the returned top values list."""
         import json
@@ -591,6 +638,18 @@ class TestCLI:
         result = runner.invoke(app, ["head", str(tsv_file)])
         assert result.exit_code == 0
         assert "alice" in result.output
+
+    @pytest.mark.parametrize("delimiter", ["", "||", "é", "\x00"])
+    def test_head_rejects_empty_or_multi_character_delimiter(self, tmp_path, delimiter):
+        """A delimiter that is not one character should fail before CSV parsing."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,alice\n", encoding="utf-8")
+        result = runner.invoke(
+            app, ["--output", "plain", "--delimiter", delimiter, "head", str(csv_file)]
+        )
+        assert result.exit_code == 1
+        assert "single ASCII character" in result.stderr
+        assert "Py_UCS4" not in result.stderr
 
     def test_head_csv_custom_delimiter(self, tmp_path):
         """head --delimiter should parse pipe-separated files correctly."""

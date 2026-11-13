@@ -8,7 +8,7 @@ from typing import Iterator, List, Optional
 import pyarrow as pa
 import pyarrow.csv as pacsv
 
-from parq.formats._common import _InputMetadata
+from parq.formats._common import _InputMetadata, _validate_delimiter
 
 
 def _iter_csv_batches(
@@ -17,6 +17,7 @@ def _iter_csv_batches(
     delimiter: str = ",",
 ) -> Iterator[pa.RecordBatch]:
     """Stream CSV input as Arrow record batches."""
+    _validate_delimiter(delimiter)
     parse_options = pacsv.ParseOptions(delimiter=delimiter)
     convert_options = None
     if columns is not None:
@@ -30,6 +31,7 @@ def _scan_csv_metadata(
     file_path: Path, include_row_count: bool = False, delimiter: str = ","
 ) -> _InputMetadata:
     """Scan CSV schema eagerly and count rows only when required."""
+    _validate_delimiter(delimiter)
     parse_options = pacsv.ParseOptions(delimiter=delimiter)
     reader = pacsv.open_csv(file_path, parse_options=parse_options)
     schema = reader.schema

@@ -10,6 +10,8 @@ Internal format-specific logic lives in parq/formats/:
   _parquet.py       — ParquetReader class
 """
 
+import math
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, List, Optional, Union
 
@@ -17,7 +19,6 @@ import pyarrow as pa
 
 from parq.formats import SUPPORTED_INPUT_FORMATS
 from parq.formats._chunk_writers import (
-    _open_chunk_writer,
     _resolve_output_files,
     _stream_split_by_record_count,
     _split_batches_to_files,
@@ -101,6 +102,12 @@ class MultiFormatReader:
         """Release file handles owned by this reader."""
         if self._parquet_reader is not None:
             self._parquet_reader.close()
+
+    def __enter__(self) -> "MultiFormatReader":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -499,7 +506,7 @@ def _build_diff_index(
     """Build a keyed row index for diffing and reject duplicate keys."""
     index: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in _iter_row_dicts(reader, selected_columns):
-        key = tuple(row[column] for column in key_columns)
+        key = _row_key(row, key_columns)
         if key in index:
             rendered_key = key if len(key) > 1 else key[0]
             raise ValueError(f"Duplicate key found in {side_name} input: {rendered_key}")
@@ -524,15 +531,70 @@ def _render_key(key: tuple[Any, ...]) -> Any:
     return key if len(key) > 1 else key[0]
 
 
+class _NaNKey(float):
+    """Float NaN that compares equal to itself so it can be a diff key.
+
+    ``hash(float("nan"))`` is not stable across temporary objects, so this
+    sentinel uses a constant hash and only compares equal to other sentinels.
+    """
+
+    def __new__(cls) -> "_NaNKey":
+        return float.__new__(cls, "nan")
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _NaNKey)
+
+
+_NAN_KEY = _NaNKey()
+
+
+def _normalize_key_part(part: Any) -> Any:
+    """Map values that should match as one key onto a stable, hashable form."""
+    if isinstance(part, float) and math.isnan(part):
+        return _NAN_KEY
+    if isinstance(part, float) and part == 0:
+        return 0.0
+    return part
+
+
+def _row_key(row: dict[str, Any], key_columns: List[str]) -> tuple[Any, ...]:
+    """Build a hashable key, treating NaN and signed zero as one value."""
+    return tuple(_normalize_key_part(row[column]) for column in key_columns)
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    """Compare two cell values, treating NaN as equal to NaN."""
+    if left is right:
+        return True
+    if isinstance(left, float) and isinstance(right, float):
+        if math.isnan(left) and math.isnan(right):
+            return True
+        return left == right
+    if isinstance(left, Decimal) and isinstance(right, Decimal):
+        if left.is_nan() and right.is_nan():
+            return True
+        return left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_same_value(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return False
+        return all(_same_value(item, other) for item, other in zip(left, right))
+    if isinstance(left, tuple) and isinstance(right, tuple):
+        if len(left) != len(right):
+            return False
+        return all(_same_value(item, other) for item, other in zip(left, right))
+    return left == right
+
+
 def _bucket_key(key: tuple[Any, ...]) -> tuple[Any, ...]:
     """Normalize parts that compare equal so they land in the same bucket."""
-    normalized = []
-    for part in key:
-        if isinstance(part, float) and part == 0:
-            normalized.append(0.0)
-        else:
-            normalized.append(part)
-    return tuple(normalized)
+    return tuple(_normalize_key_part(part) for part in key)
 
 
 def _stable_bucket(key: tuple[Any, ...], num_buckets: int, salt: int) -> int:
@@ -589,7 +651,7 @@ def _diff_rows_in_memory(
     seen_streamed_keys: set[tuple[Any, ...]] = set()
 
     for row in _iter_row_dicts(streamed_reader, selected_columns):
-        key = tuple(row[column] for column in key_columns)
+        key = _row_key(row, key_columns)
         if key in seen_streamed_keys:
             raise ValueError(
                 f"Duplicate key found in {streamed_side_name} input: {_render_key(key)}"
@@ -604,7 +666,10 @@ def _diff_rows_in_memory(
             continue
 
         indexed_values = indexed_rows.pop(key)
-        if any(streamed_values[column] != indexed_values[column] for column in comparable_columns):
+        if any(
+            not _same_value(streamed_values[column], indexed_values[column])
+            for column in comparable_columns
+        ):
             changed_count += 1
             if index_left:
                 left_values = indexed_values
@@ -667,7 +732,9 @@ def _spill_reader_to_buckets(
             batch_dict = batch.to_pydict()
             bucket_indices: List[List[int]] = [[] for _ in range(num_buckets)]
             for row_idx in range(len(batch)):
-                key = tuple(batch_dict[column][row_idx] for column in key_columns)
+                key = tuple(
+                    _normalize_key_part(batch_dict[column][row_idx]) for column in key_columns
+                )
                 bucket = _stable_bucket(key, num_buckets, salt)
                 bucket_indices[bucket].append(row_idx)
             for bucket, indices in enumerate(bucket_indices):
@@ -846,6 +913,42 @@ def _diff_rows_bounded(
     )
 
 
+def _duplicated_column_names(names: List[str]) -> set[str]:
+    """Return names that occur more than once."""
+    return {name for name in names if names.count(name) > 1}
+
+
+def _schema_type_mismatches(
+    left_schema: pa.Schema, right_schema: pa.Schema, shared_columns: List[str]
+) -> List[dict]:
+    """Pair shared columns in order so a repeated name is not looked up with schema.field."""
+    mismatches = []
+    for name in dict.fromkeys(shared_columns):
+        left_fields = [field for field in left_schema if field.name == name]
+        right_fields = [field for field in right_schema if field.name == name]
+        multiple = len(left_fields) > 1 or len(right_fields) > 1
+        for index, (left_field, right_field) in enumerate(zip(left_fields, right_fields)):
+            if str(left_field.type) == str(right_field.type):
+                continue
+            mismatch = {
+                "column": name,
+                "left_type": str(left_field.type),
+                "right_type": str(right_field.type),
+            }
+            if multiple:
+                mismatch["occurrence"] = index
+            mismatches.append(mismatch)
+        if len(left_fields) != len(right_fields):
+            mismatches.append(
+                {
+                    "column": name,
+                    "left_type": f"{len(left_fields)} occurrences",
+                    "right_type": f"{len(right_fields)} occurrences",
+                }
+            )
+    return mismatches
+
+
 def diff_files(
     left_path: Union[str, Path],
     right_path: Union[str, Path],
@@ -857,55 +960,65 @@ def diff_files(
     sheet: Optional[str] = None,
 ) -> dict:
     """Compute a keyed diff summary for two parquet, csv, or tsv files."""
-    left_reader = MultiFormatReader(str(left_path), delimiter=delimiter, sheet=sheet)
-    right_reader = MultiFormatReader(str(right_path), delimiter=delimiter, sheet=sheet)
-
-    if "xlsx" in {left_reader.input_format, right_reader.input_format}:
-        raise ValueError(
-            "diff currently supports parquet, csv, and tsv inputs; convert xlsx first with:\n"
-            "  parq convert input.xlsx output.parquet"
-        )
-
-    _validate_preview_params(0, left_reader.schema, key_columns)
-    _validate_preview_params(0, right_reader.schema, key_columns)
-    if columns is not None:
-        _validate_preview_params(0, left_reader.schema, columns)
-        _validate_preview_params(0, right_reader.schema, columns)
-
-    left_names = left_reader.schema.names
-    right_names = right_reader.schema.names
-    schema_only_left = [name for name in left_names if name not in right_names]
-    schema_only_right = [name for name in right_names if name not in left_names]
-    shared_columns = [name for name in left_names if name in right_names]
-    schema_type_mismatches = []
-    for name in shared_columns:
-        left_field = left_reader.schema.field(name)
-        right_field = right_reader.schema.field(name)
-        if str(left_field.type) != str(right_field.type):
-            schema_type_mismatches.append(
-                {
-                    "column": name,
-                    "left_type": str(left_field.type),
-                    "right_type": str(right_field.type),
-                }
+    if limit < 0:
+        raise ValueError(f"limit must be non-negative, got {limit}")
+    with (
+        MultiFormatReader(str(left_path), delimiter=delimiter, sheet=sheet) as left_reader,
+        MultiFormatReader(str(right_path), delimiter=delimiter, sheet=sheet) as right_reader,
+    ):
+        if "xlsx" in {left_reader.input_format, right_reader.input_format}:
+            raise ValueError(
+                "diff currently supports parquet, csv, and tsv inputs; convert xlsx first with:\n"
+                "  parq convert input.xlsx output.parquet"
             )
 
-    comparable_columns = columns or [
-        name for name in left_names if name in right_names and name not in key_columns
-    ]
-    selected_columns = list(dict.fromkeys(key_columns + comparable_columns))
-    row_diff = _diff_rows_bounded(
-        left_reader,
-        right_reader,
-        key_columns,
-        selected_columns,
-        comparable_columns,
-        limit,
-        summary_only,
-    )
+        _validate_preview_params(0, left_reader.schema, key_columns)
+        _validate_preview_params(0, right_reader.schema, key_columns)
+        if columns is not None:
+            _validate_preview_params(0, left_reader.schema, columns)
+            _validate_preview_params(0, right_reader.schema, columns)
+
+        left_names = left_reader.schema.names
+        right_names = right_reader.schema.names
+        schema_only_left = [name for name in left_names if name not in right_names]
+        schema_only_right = [name for name in right_names if name not in left_names]
+        shared_columns = [name for name in left_names if name in right_names]
+        schema_type_mismatches = _schema_type_mismatches(
+            left_reader.schema, right_reader.schema, shared_columns
+        )
+        duplicated_names = _duplicated_column_names(left_names) | _duplicated_column_names(
+            right_names
+        )
+        if columns is None:
+            ambiguous = [
+                name
+                for name in dict.fromkeys(shared_columns)
+                if name not in key_columns and name in duplicated_names
+            ]
+            if ambiguous:
+                raise ValueError(
+                    "Column names are duplicated and cannot be compared by name: "
+                    f"{ambiguous}. Pass --columns with the unique columns to compare."
+                )
+
+        comparable_columns = columns or [
+            name for name in left_names if name in right_names and name not in key_columns
+        ]
+        selected_columns = list(dict.fromkeys(key_columns + comparable_columns))
+        row_diff = _diff_rows_bounded(
+            left_reader,
+            right_reader,
+            key_columns,
+            selected_columns,
+            comparable_columns,
+            limit,
+            summary_only,
+        )
+        left_rows = left_reader.num_rows
+        right_rows = right_reader.num_rows
 
     return {
-        "row_count_delta": left_reader.num_rows - right_reader.num_rows,
+        "row_count_delta": left_rows - right_rows,
         "only_left_count": row_diff["only_left_count"],
         "only_right_count": row_diff["only_right_count"],
         "changed_count": row_diff["changed_count"],
@@ -951,57 +1064,49 @@ def merge_files(
 
     output_path = Path(output_path)
     _reject_output_matching_input(output_path, input_paths)
-    if output_path.exists():
-        if force:
-            output_path.unlink()
-        else:
-            raise FileExistsError(f"Output file already exists: {output_path}")
+    if output_path.exists() and not force:
+        raise FileExistsError(f"Output file already exists: {output_path}")
 
-    readers = [
-        MultiFormatReader(str(path), delimiter=delimiter, sheet=sheet) for path in input_paths
-    ]
-    for reader in readers:
-        reader._ensure_xlsx_types_for_full_read()
-    schemas = [reader.schema for reader in readers]
+    readers: List[MultiFormatReader] = []
     try:
-        unified_schema = pa.unify_schemas(schemas)
-    except (pa.ArrowInvalid, pa.ArrowTypeError) as e:
-        raise ValueError(f"Incompatible schemas: {e}") from e
-
-    # Compute total rows for progress reporting (0 = unknown)
-    total_rows = 0
-    if progress_callback is not None:
-        try:
-            total_rows = sum(r.num_rows for r in readers)
-        except Exception:
-            total_rows = 0
-
-    writer = _open_chunk_writer(
-        output_path,
-        unified_schema,
-        compression="SNAPPY" if output_path.suffix.lower() == ".parquet" else None,
-    )
-    total_written = 0
-    try:
+        for path in input_paths:
+            readers.append(MultiFormatReader(str(path), delimiter=delimiter, sheet=sheet))
         for reader in readers:
-            for batch in _reader_batch_iterator(reader):
-                batch_table = pa.Table.from_batches([batch], schema=batch.schema)
-                if batch_table.schema != unified_schema:
-                    batch = batch_table.cast(unified_schema).to_batches()[0]
-                writer.write_batch(batch)
-                total_written += len(batch)
-                if progress_callback is not None:
-                    progress_callback(total_written, total_rows)
-    except Exception:
+            reader._ensure_xlsx_types_for_full_read()
+        schemas = [reader.schema for reader in readers]
         try:
-            writer.close()
-        except Exception:
-            pass
-        try:
-            output_path.unlink()
-        except (FileNotFoundError, OSError):
-            pass
-        raise
+            unified_schema = pa.unify_schemas(schemas)
+        except (pa.ArrowInvalid, pa.ArrowTypeError) as e:
+            raise ValueError(f"Incompatible schemas: {e}") from e
 
-    writer.close()
-    return total_written
+        # Compute total rows for progress reporting (0 = unknown)
+        total_rows = 0
+        if progress_callback is not None:
+            try:
+                total_rows = sum(reader.num_rows for reader in readers)
+            except Exception:
+                total_rows = 0
+
+        def batches() -> Iterator[pa.RecordBatch]:
+            for reader in readers:
+                for batch in _reader_batch_iterator(reader):
+                    if batch.schema != unified_schema:
+                        batch = (
+                            pa.Table.from_batches([batch], schema=batch.schema)
+                            .cast(unified_schema)
+                            .to_batches()[0]
+                        )
+                    yield batch
+
+        return _write_batches_to_output(
+            batches(),
+            unified_schema,
+            output_path,
+            compression="SNAPPY" if output_path.suffix.lower() == ".parquet" else None,
+            force=force,
+            progress_callback=progress_callback,
+            total_rows=total_rows,
+        )
+    finally:
+        for reader in readers:
+            reader.close()

@@ -58,6 +58,24 @@ class TestJsonOutputFormatter:
         assert data["rows"][0]["id"] == 1
 
 
+def test_json_table_summarizes_binary_values(capsys):
+    """JSON rows summarize binary cells instead of dumping the payload."""
+    payload = b"\x00\x01[/x]" * 10
+    table = pa.table(
+        {
+            "raw": pa.array([payload], type=pa.binary()),
+            "image": pa.array([{"bytes": payload, "path": "a.png"}]),
+        }
+    )
+    JsonOutputFormatter.print_table(table)
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["rows"][0]["raw"] == "<binary 60 bytes>"
+    assert data["rows"][0]["image"]["bytes"] == "<binary 60 bytes>"
+    assert data["rows"][0]["image"]["path"] == "a.png"
+    assert "\\x00" not in out
+
+
 def test_plain_table_summarizes_binary_values(capsys):
     """Binary cells (issue #4) are summarized instead of dumped in plain mode."""
     import pyarrow as pa

@@ -2,6 +2,7 @@
 Tests for ParquetReader.
 """
 
+import math
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,16 @@ class TestParquetReader:
         table = reader.read_head(3, columns=["id", "name"])
         assert len(table) == 3
         assert table.column_names == ["id", "name"]
+
+    def test_read_head_rejects_duplicated_column_name(self, tmp_path):
+        """Selecting a repeated name explains the ambiguity instead of saying it is missing."""
+        csv_file = tmp_path / "dup.csv"
+        csv_file.write_text("id,id,name\n1,2,alice\n", encoding="utf-8")
+        reader = MultiFormatReader(str(csv_file))
+
+        with pytest.raises(ValueError, match="duplicated"):
+            reader.read_head(5, columns=["id"])
+        assert reader.read_head(5, columns=["name"]).column("name").to_pylist() == ["alice"]
 
     def test_read_head_with_columns_invalid(self, sample_parquet_file):
         """Test read_head raises on invalid column names."""
@@ -340,14 +351,18 @@ class TestParquetReader:
         output_pattern = str(tmp_path / "split-%03d.parquet")
 
         class FailingWriter:
+            opened = 0
+
             def __init__(self, where, schema, compression=None):
                 del schema, compression
                 self.path = Path(where)
                 self.path.touch()
+                FailingWriter.opened += 1
+                self.index = FailingWriter.opened
 
             def write_batch(self, batch):
                 del batch
-                if self.path.name.endswith("001.parquet"):
+                if self.index == 2:
                     raise OSError("simulated write failure")
 
             def close(self):
@@ -360,6 +375,7 @@ class TestParquetReader:
 
         assert not (tmp_path / "split-000.parquet").exists()
         assert not (tmp_path / "split-001.parquet").exists()
+        assert list(tmp_path.glob(".*")) == []
 
 
 class TestMultiFormatReader:
@@ -696,6 +712,147 @@ class TestMultiFormatReader:
             reader.split_file(output_pattern=output_pattern, record_count=2)
 
         assert not (tmp_path / "split-00.csv").exists()
+        assert list(tmp_path.glob(".*")) == []
+
+    def test_split_force_keeps_existing_outputs_when_write_fails(
+        self, tmp_path, monkeypatch
+    ):
+        """A failed --force split must not delete outputs that were already there."""
+        import parq.formats._chunk_writers as chunk_writers_mod
+
+        source = tmp_path / "source.parquet"
+        pq.write_table(pa.table({"id": [1, 2, 3, 4]}), source)
+        first = tmp_path / "split-000.parquet"
+        second = tmp_path / "split-001.parquet"
+        pq.write_table(pa.table({"id": [7]}), first)
+        pq.write_table(pa.table({"id": [8]}), second)
+
+        class FailingWriter:
+            opened = 0
+
+            def __init__(self, where, schema, compression=None):
+                del schema, compression
+                self.path = Path(where)
+                FailingWriter.opened += 1
+                self.index = FailingWriter.opened
+
+            def write_batch(self, batch):
+                del batch
+                if self.index == 2:
+                    raise OSError("simulated write failure")
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(chunk_writers_mod.pq, "ParquetWriter", FailingWriter)
+        reader = ParquetReader(str(source))
+
+        with pytest.raises(OSError, match="simulated write failure"):
+            reader.split_file(
+                output_pattern=str(tmp_path / "split-%03d.parquet"),
+                file_count=2,
+                force=True,
+            )
+
+        assert pq.read_table(first).column("id").to_pylist() == [7]
+        assert pq.read_table(second).column("id").to_pylist() == [8]
+        assert list(tmp_path.glob(".*")) == []
+
+    def test_split_record_count_force_keeps_existing_output_when_write_fails(
+        self, tmp_path, monkeypatch
+    ):
+        """Streaming --force split must not unlink an existing part before the write succeeds."""
+        import parq.formats._chunk_writers as chunk_writers_mod
+
+        source = tmp_path / "source.csv"
+        pacsv.write_csv(pa.table({"id": [1, 2, 3, 4]}), source)
+        existing = tmp_path / "split-00.csv"
+        existing.write_text("keep\n", encoding="utf-8")
+
+        class FailingWriter:
+            def __init__(self, output_path, schema, delimiter=","):
+                del schema, delimiter
+                self.output_path = Path(output_path)
+
+            def write_batch(self, batch):
+                del batch
+                raise OSError("simulated write failure")
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(chunk_writers_mod, "_CsvChunkWriter", FailingWriter)
+        reader = MultiFormatReader(str(source))
+
+        with pytest.raises(OSError, match="simulated write failure"):
+            reader.split_file(
+                output_pattern=str(tmp_path / "split-%02d.csv"),
+                record_count=2,
+                force=True,
+            )
+
+        assert existing.read_text(encoding="utf-8") == "keep\n"
+        assert list(tmp_path.glob(".*")) == []
+
+    def test_diff_treats_nan_as_equal(self, tmp_path):
+        """NaN cells and NaN keys match, and duplicate NaN keys are rejected."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(
+            pa.table({"id": [1.0, float("nan")], "value": [float("nan"), 1.0]}),
+            left,
+        )
+        pq.write_table(
+            pa.table({"id": [1.0, float("nan")], "value": [float("nan"), 2.0]}),
+            right,
+        )
+
+        result = diff_files(left, right, ["id"])
+
+        assert result["changed_count"] == 1
+        assert result["only_left_count"] == 0
+        assert result["only_right_count"] == 0
+        assert math.isnan(result["changed_rows"][0]["key"])
+        assert result["changed_rows"][0]["left"] == {"value": 1.0}
+        assert result["changed_rows"][0]["right"] == {"value": 2.0}
+
+    def test_diff_rejects_duplicate_nan_keys(self, tmp_path):
+        """NaN does not compare equal to itself in Python, but it is one key."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(pa.table({"id": [float("nan"), float("nan")], "value": [1.0, 2.0]}), left)
+        pq.write_table(pa.table({"id": [float("nan")], "value": [1.0]}), right)
+
+        with pytest.raises(ValueError, match="Duplicate key"):
+            diff_files(left, right, ["id"])
+
+    def test_diff_and_merge_close_parquet_readers(self, tmp_path, monkeypatch):
+        """Parquet handles are released even when the operation succeeds."""
+        from parq.reader import merge_files
+
+        closed: list[str] = []
+        original_close = MultiFormatReader.close
+
+        def spy(self):
+            closed.append(self.file_path.name)
+            original_close(self)
+
+        monkeypatch.setattr(MultiFormatReader, "close", spy)
+
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        merged = tmp_path / "merged.parquet"
+        pq.write_table(pa.table({"id": [1], "value": [float("nan")]}), left)
+        pq.write_table(pa.table({"id": [1], "value": [float("nan")]}), right)
+
+        diff_files(left, right, ["id"])
+        assert closed.count("left.parquet") == 1
+        assert closed.count("right.parquet") == 1
+
+        merge_files([left, right], merged)
+        assert closed.count("left.parquet") == 2
+        assert closed.count("right.parquet") == 2
+        assert pq.read_table(merged).num_rows == 2
 
     def test_diff_rejects_duplicate_keys(self, tmp_path):
         """Keyed diff should fail fast when either side contains duplicate keys."""
@@ -706,6 +863,27 @@ class TestMultiFormatReader:
 
         with pytest.raises(ValueError, match="Duplicate key"):
             diff_files(left, right, ["id"])
+
+    def test_diff_duplicate_column_names_are_reported_clearly(self, tmp_path):
+        """Repeated names are paired by position and are not described as missing."""
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        left.write_text("id,id,name\n1,2,a\n", encoding="utf-8")
+        right.write_text("id,id,name\n1,x,a\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="duplicated") as raised:
+            diff_files(left, right, ["name"])
+        assert "does not exist" not in str(raised.value)
+
+        result = diff_files(left, right, ["name"], columns=["name"])
+
+        assert result["changed_count"] == 0
+        assert {
+            "column": "id",
+            "left_type": "int64",
+            "right_type": "string",
+            "occurrence": 1,
+        } in result["schema_type_mismatches"]
 
     def test_diff_reports_schema_type_changes(self, tmp_path):
         """Schema diff should include same-name columns whose types changed."""
@@ -853,6 +1031,47 @@ class TestMultiFormatReader:
         assert seen
         assert all(total == 0 for _, total in seen)
         assert seen[-1][0] == 5
+
+    @pytest.mark.parametrize("delimiter", ["", "||", "é", "\x00"])
+    def test_csv_read_and_write_reject_bad_delimiters(self, tmp_path, delimiter):
+        """CSV parsing and CSV writing both reject an empty or multi-character delimiter."""
+        from parq.formats._chunk_writers import _CsvChunkWriter
+
+        source = tmp_path / "data.csv"
+        source.write_text("id,name\n1,alice\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="single ASCII character"):
+            MultiFormatReader(str(source), delimiter=delimiter).schema
+        with pytest.raises(ValueError, match="single ASCII character"):
+            _CsvChunkWriter(
+                tmp_path / "out.csv",
+                pa.schema([("id", pa.int64())]),
+                delimiter=delimiter,
+            )
+
+    def test_stats_and_diff_reject_negative_limits(self, sample_parquet_file):
+        """Negative limits are rejected before Python slicing drops the tail."""
+        reader = MultiFormatReader(str(sample_parquet_file))
+        with pytest.raises(ValueError, match="limit must be non-negative"):
+            reader.get_stats(limit=-1)
+        with pytest.raises(ValueError, match="top_n must be non-negative"):
+            reader.get_stats(top_n=-1)
+        with pytest.raises(ValueError, match="limit must be non-negative"):
+            diff_files(sample_parquet_file, sample_parquet_file, ["id"], limit=-1)
+        assert reader.get_stats(limit=0) == []
+
+    def test_stats_min_max_mean_ignore_nan(self):
+        """NaN is not a minimum, maximum, or part of the mean."""
+        from parq.formats._common import _compute_stats_from_batches
+
+        table = pa.table({"value": [1.0, float("nan"), 3.0, None]})
+        stats = _compute_stats_from_batches(table.to_batches(), table.schema)
+
+        assert stats[0]["min"] == 1.0
+        assert stats[0]["max"] == 3.0
+        assert stats[0]["mean"] == 2.0
+        assert stats[0]["null_count"] == 1
+        assert stats[0]["count"] == 3
+        assert "_finite" not in stats[0]
 
     def test_stats_top_values_keep_late_frequent_values(self):
         """Top values should include a frequent item that appears after many rare ones."""

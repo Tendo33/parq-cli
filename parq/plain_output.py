@@ -201,7 +201,10 @@ class JsonOutputFormatter:
             batch_dict = batch.to_pydict()
             for row_idx in range(len(batch)):
                 rows.append(
-                    {column: batch_dict[column][row_idx] for column in arrow_table.column_names}
+                    {
+                        column: summarize_binary(batch_dict[column][row_idx])
+                        for column in arrow_table.column_names
+                    }
                 )
         print(json.dumps({"rows": rows}, default=str))
 

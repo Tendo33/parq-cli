@@ -44,6 +44,12 @@ class ParquetReader:
             close()
         self._parquet_file = None
 
+    def __enter__(self) -> "ParquetReader":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
     @property
     def metadata(self) -> pq.FileMetaData:
         """Get file metadata."""

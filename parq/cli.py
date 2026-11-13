@@ -207,8 +207,8 @@ def meta(
     _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
-        reader = _get_reader(str(file), _get_state(ctx))
-        formatter.print_metadata(reader.get_metadata_dict(fast=fast))
+        with _get_reader(str(file), _get_state(ctx)) as reader:
+            formatter.print_metadata(reader.get_metadata_dict(fast=fast))
 
     _run_with_error_handling(
         ctx, operation, generic_error_prefix="Failed to read file", file_path=file
@@ -227,8 +227,8 @@ def schema(
     _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
-        reader = _get_reader(str(file), _get_state(ctx))
-        formatter.print_schema(reader.get_schema_info())
+        with _get_reader(str(file), _get_state(ctx)) as reader:
+            formatter.print_schema(reader.get_schema_info())
 
     _run_with_error_handling(
         ctx, operation, generic_error_prefix="Failed to read file", file_path=file
@@ -252,9 +252,9 @@ def head(
     _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
-        reader = _get_reader(str(file), _get_state(ctx))
-        table = reader.read_head(n, columns=_parse_column_list(columns))
-        formatter.print_table(table, f"First {n} Rows")
+        with _get_reader(str(file), _get_state(ctx)) as reader:
+            table = reader.read_head(n, columns=_parse_column_list(columns))
+            formatter.print_table(table, f"First {n} Rows")
 
     _run_with_error_handling(
         ctx, operation, generic_error_prefix="Failed to read file", file_path=file
@@ -278,9 +278,9 @@ def tail(
     _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
-        reader = _get_reader(str(file), _get_state(ctx))
-        table = reader.read_tail(n, columns=_parse_column_list(columns))
-        formatter.print_table(table, f"Last {n} Rows")
+        with _get_reader(str(file), _get_state(ctx)) as reader:
+            table = reader.read_tail(n, columns=_parse_column_list(columns))
+            formatter.print_table(table, f"Last {n} Rows")
 
     _run_with_error_handling(
         ctx, operation, generic_error_prefix="Failed to read file", file_path=file
@@ -299,8 +299,8 @@ def count(
     _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
-        reader = _get_reader(str(file), _get_state(ctx))
-        formatter.print_count(reader.num_rows)
+        with _get_reader(str(file), _get_state(ctx)) as reader:
+            formatter.print_count(reader.num_rows)
 
     _run_with_error_handling(
         ctx, operation, generic_error_prefix="Failed to read file", file_path=file
@@ -352,60 +352,59 @@ def split(
         import time
 
         start_time = time.time()
-        reader = _get_reader(str(file), state)
+        with _get_reader(str(file), state) as reader:
+            if state.output_format == OutputFormat.RICH:
+                from rich.progress import (
+                    BarColumn,
+                    Progress,
+                    SpinnerColumn,
+                    TextColumn,
+                    TimeRemainingColumn,
+                )
+                from parq.output import console
 
-        if state.output_format == OutputFormat.RICH:
-            from rich.progress import (
-                BarColumn,
-                Progress,
-                SpinnerColumn,
-                TextColumn,
-                TimeRemainingColumn,
-            )
-            from parq.output import console
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    TimeRemainingColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(f"[cyan]Splitting {file.name}...", total=None)
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeRemainingColumn(),
-                console=console,
-            ) as progress:
-                task = progress.add_task(f"[cyan]Splitting {file.name}...", total=None)
+                    def update_progress(current: int, total: int):
+                        if progress.tasks[task].total is None and total:
+                            progress.update(task, total=total)
+                        progress.update(task, completed=current)
 
-                def update_progress(current: int, total: int):
-                    if progress.tasks[task].total is None and total:
-                        progress.update(task, total=total)
-                    progress.update(task, completed=current)
-
+                    output_files = reader.split_file(
+                        output_pattern=name_format,
+                        file_count=file_count,
+                        record_count=record_count,
+                        progress_callback=update_progress,
+                        force=force,
+                    )
+            else:
                 output_files = reader.split_file(
                     output_pattern=name_format,
                     file_count=file_count,
                     record_count=record_count,
-                    progress_callback=update_progress,
                     force=force,
                 )
-        else:
-            output_files = reader.split_file(
-                output_pattern=name_format,
-                file_count=file_count,
-                record_count=record_count,
-                force=force,
-            )
 
-        elapsed_time = time.time() - start_time
-        total_rows = (
-            reader.last_split_total_rows
-            if reader.last_split_total_rows is not None
-            else reader.num_rows
-        )
-        formatter.print_split_result(
-            source_file=file,
-            output_files=output_files,
-            total_rows=total_rows,
-            elapsed_time=elapsed_time,
-        )
+            elapsed_time = time.time() - start_time
+            total_rows = (
+                reader.last_split_total_rows
+                if reader.last_split_total_rows is not None
+                else reader.num_rows
+            )
+            formatter.print_split_result(
+                source_file=file,
+                output_files=output_files,
+                total_rows=total_rows,
+                elapsed_time=elapsed_time,
+            )
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError, FileExistsError) as e:
@@ -437,10 +436,10 @@ def stats(
     _apply_command_options(ctx, output_format, delimiter, sheet)
 
     def operation(formatter: Any) -> None:
-        reader = _get_reader(str(file), _get_state(ctx))
-        formatter.print_stats(
-            reader.get_stats(columns=_parse_column_list(columns), limit=limit, top_n=top_n)
-        )
+        with _get_reader(str(file), _get_state(ctx)) as reader:
+            formatter.print_stats(
+                reader.get_stats(columns=_parse_column_list(columns), limit=limit, top_n=top_n)
+            )
 
     _run_with_error_handling(
         ctx, operation, generic_error_prefix="Failed to compute stats", file_path=file
@@ -476,52 +475,51 @@ def convert(
         import time
 
         start_time = time.time()
-        reader = _get_reader(str(source), state)
-
-        if state.output_format == OutputFormat.RICH:
-            from rich.progress import (
-                Progress,
-                SpinnerColumn,
-                TextColumn,
-                BarColumn,
-                TimeRemainingColumn,
-            )
-            from parq.output import console
-
-            total_rows_hint = reader.num_rows if reader.input_format == "parquet" else 0
-
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeRemainingColumn(),
-                console=console,
-            ) as progress:
-                task = progress.add_task(
-                    f"[cyan]Converting {source.name}...",
-                    total=total_rows_hint if total_rows_hint > 0 else None,
+        with _get_reader(str(source), state) as reader:
+            if state.output_format == OutputFormat.RICH:
+                from rich.progress import (
+                    Progress,
+                    SpinnerColumn,
+                    TextColumn,
+                    BarColumn,
+                    TimeRemainingColumn,
                 )
+                from parq.output import console
 
-                def update_progress(current: int, total: int) -> None:
-                    if progress.tasks[task].total is None and total:
-                        progress.update(task, total=total)
-                    progress.update(task, completed=current)
+                total_rows_hint = reader.num_rows if reader.input_format == "parquet" else 0
 
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    TimeRemainingColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(
+                        f"[cyan]Converting {source.name}...",
+                        total=total_rows_hint if total_rows_hint > 0 else None,
+                    )
+
+                    def update_progress(current: int, total: int) -> None:
+                        if progress.tasks[task].total is None and total:
+                            progress.update(task, total=total)
+                        progress.update(task, completed=current)
+
+                    total_rows = reader.convert_file(
+                        output,
+                        columns=_parse_column_list(columns),
+                        force=force,
+                        progress_callback=update_progress,
+                    )
+            else:
                 total_rows = reader.convert_file(
                     output,
                     columns=_parse_column_list(columns),
                     force=force,
-                    progress_callback=update_progress,
                 )
-        else:
-            total_rows = reader.convert_file(
-                output,
-                columns=_parse_column_list(columns),
-                force=force,
-            )
 
-        formatter.print_convert_result(source, output, total_rows, time.time() - start_time)
+            formatter.print_convert_result(source, output, total_rows, time.time() - start_time)
     except typer.Exit:
         raise
     except (FileNotFoundError, ValueError, FileExistsError) as e:
