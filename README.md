@@ -94,10 +94,10 @@ parq merge chunks/*.parquet merged.parquet --force         # overwrite if exists
 | `split` | yes | yes | yes | yes |
 | `stats` | yes | yes | yes | yes |
 | `convert` | yes | yes | yes | yes |
-| `diff` | yes | yes | yes | no, convert first |
+| `diff` | yes | yes | yes | yes |
 | `merge` | yes | yes | yes | yes |
 
-`XLSX` reads use `python-calamine` and writes use `openpyxl`; both install with `parq-cli[xlsx]`. Formula cells are read from Excel's cached value, so a formula Excel has not calculated comes back empty. TSV files are auto-detected by the `.tsv` extension; a custom delimiter can be supplied with `--delimiter`.
+`XLSX` reads use `python-calamine` and writes use `openpyxl`; both install with `parq-cli[xlsx]`. Formula cells are read from Excel's cached value, so a formula Excel has not calculated comes back empty. TSV files are auto-detected by the `.tsv` extension; a custom delimiter can be supplied with `--delimiter`. CSV and TSV reads default to UTF-8. Pass `--encoding gbk` (or another codec name) for a different input encoding. Writes stay UTF-8.
 
 ## Command Reference
 
@@ -221,12 +221,13 @@ Compares two datasets by key and reports:
 Notes:
 
 - `--key` is required
-- `diff` currently supports Parquet, CSV, and TSV inputs
-- the global `--delimiter` applies to both CSV inputs
-- XLSX files should be converted first
+- inputs can be Parquet, CSV, TSV, or XLSX
+- `--delimiter`, `--encoding`, and `--sheet` apply to both inputs
+- XLSX diff parses the selected sheet in full, so a later value can widen a column before types are compared
+- a type difference is always reported. The text from `str(value)` is not a cell edit; any other text is. Keys stay exact, so `1` and `"1"` do not match
 - duplicate keys on either side are treated as an error
 - inputs larger than 100,000 rows on a side spill into temporary files instead of holding every key in memory
-- `--summary-only` keeps the counts and omits sample payloads
+- `--summary-only` keeps the counts and the type mismatches, and omits sample row payloads
 
 ### `merge`
 
@@ -243,7 +244,7 @@ Notes:
 - schemas must be identical or safely unifiable by Arrow
 - by default, existing output files raise an error; use `--force` / `-F` to overwrite
 - output format is inferred from the output suffix, including `.tsv`
-- the global `--delimiter` and `--sheet` apply to every input
+- the global `--delimiter`, `--encoding`, and `--sheet` apply to every input
 - a live progress bar is shown during the merge
 
 ## Output Modes
@@ -253,10 +254,11 @@ Global options:
 - `--version`, `-v`: show version information. Place this before the subcommand: `parq --version`
 - `--output`, `-o`: select output format (`rich` | `plain` | `json`)
 - `--delimiter`, `-d`: field delimiter for CSV/TSV input (default: `,`); `.tsv` files default to `\t` automatically
+- `--encoding`: character encoding for CSV/TSV input (default: `utf8`). Writes stay UTF-8
 - `--sheet`: XLSX sheet name or 0-based index to read (default: active sheet). A value made only of digits is an index, including a sheet whose name is `1` or `2`
 - `--help`: show command help
 
-`--output`, `--delimiter`, and `--sheet` work before the subcommand and on the subcommand. If you pass the same option in both places, the value on the subcommand wins. On `convert`, `--output` / `-o` still selects the display format; the destination file is the positional `OUTPUT` argument.
+`--output`, `--delimiter`, `--sheet`, and `--encoding` work before the subcommand and on the subcommand. If you pass the same option in both places, the value on the subcommand wins. On `convert`, `--output` / `-o` still selects the display format; the destination file is the positional `OUTPUT` argument.
 
 Available output modes:
 
@@ -278,11 +280,11 @@ On Windows terminals that cannot safely render emoji or extended characters, Ric
 
 ## Large File Notes
 
-- Parquet metadata, row counts, and previews use Arrow metadata and row-group shortcuts where available.
-- CSV `tail` uses a fixed-size column window instead of materializing every row as Python dicts.
+- Parquet metadata and row counts come from the file footer. `head` stops after the requested rows, including when they sit inside one large row group. `tail` reads the row groups that hold the last rows.
+- CSV `tail` scans the file once, keeps the trailing Arrow batches, and slices the last rows.
 - CSV `split --record-count` and CSV `convert` stream in one pass. Their progress bars stay indeterminate because the row count is not known ahead of time.
 - `meta --fast` is the best option when you need quick metadata from large CSV/XLSX inputs.
-- `parq schema` and a short `head` sample the first 1000 XLSX rows. `count`, `tail`, `stats`, `convert`, `split`, and `merge` parse the selected sheet once, widen a column when a later value does not fit that sample, and keep those rows in memory.
+- `parq schema` and a short `head` sample the first 1000 XLSX rows. `count`, `tail`, `stats`, `convert`, `split`, `merge`, and `diff` parse the selected sheet once, widen a column when a later value does not fit that sample, and keep those rows in memory.
 - `split --record-count` keeps the progress bar indeterminate while it writes.
 - `diff` indexes at most 100,000 rows per side in memory, then hash-partitions larger inputs into temporary Parquet files.
 

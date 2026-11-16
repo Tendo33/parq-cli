@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Parquet `head` stops after the requested rows, including inside one large row group. A preview no longer reads that whole group.
+- Streamed `tail` keeps the trailing Arrow batches and slices them. CSV `tail` no longer converts every cell to Python.
+
+- CSV and TSV reads accept `--encoding` (default `utf8`). The flag works before a subcommand and on it, and the subcommand value wins. An unknown name fails with `Unknown encoding`. Writes stay UTF-8.
+- `diff` reads `.xlsx` files. It parses the selected sheet in full so a value past the first 1000 rows can widen a column before types are compared.
+- A type difference stays in `schema_type_mismatches`, including with `--summary-only`. The text produced by `str(value)` when a number, date, or boolean is widened is not a cell edit. Any other text is. Keys stay exact, so `1` and `"1"` do not match.
+- `--encoding punycode` is rejected. PyArrow passes a buffer to that decoder and it raises AttributeError.
+
 ## 0.2.3
 
 - `merge --force` and `convert --force` replace an existing output file only after the new file is fully written. A schema mismatch or a write error leaves the previous file in place, and the temporary file is removed, including on Windows.

@@ -868,6 +868,53 @@ class TestCLI:
         assert "--output" in plain
         assert "--delimiter" in plain
         assert "--sheet" in plain
+        assert "--encoding" in plain
+
+    def test_head_reads_gbk_csv(self, tmp_path):
+        """--encoding should decode a GBK CSV that the default reader would not."""
+        csv_file = tmp_path / "gbk.csv"
+        csv_file.write_bytes("id,name\n1,张三\n".encode("gbk"))
+
+        result = runner.invoke(
+            app, ["--encoding", "gbk", "--output", "plain", "head", str(csv_file)]
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert "张三" in result.output
+
+    def test_head_encoding_on_subcommand_overrides_root(self, tmp_path):
+        """The encoding on the subcommand should win over the one before it."""
+        csv_file = tmp_path / "gbk.csv"
+        csv_file.write_bytes("id,name\n1,张三\n".encode("gbk"))
+
+        result = runner.invoke(
+            app,
+            [
+                "--encoding",
+                "utf8",
+                "--output",
+                "plain",
+                "head",
+                "--encoding",
+                "gbk",
+                str(csv_file),
+            ],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert "张三" in result.output
+
+    def test_head_rejects_unknown_encoding(self, tmp_path):
+        """An unknown encoding should exit 1 with the codec error."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("id,name\n1,alice\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app, ["--encoding", "nope", "--output", "plain", "head", str(csv_file)]
+        )
+
+        assert result.exit_code == 1
+        assert "Unknown encoding" in result.stderr
 
 
 def test_json_error_includes_file_path(tmp_path):

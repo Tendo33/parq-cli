@@ -26,14 +26,15 @@ class _AppState:
     output_format: OutputFormat = OutputFormat.RICH
     delimiter: str = ","
     sheet: Optional[str] = None
+    encoding: str = "utf8"
 
 
 app = typer.Typer(
     name="parq",
     help="A powerful command-line tool for inspecting tabular files",
     epilog=(
-        "--output, --delimiter, and --sheet work before a subcommand and on the subcommand. "
-        "When both are set, the value on the subcommand wins."
+        "--output, --delimiter, --sheet, and --encoding work before a subcommand and on the "
+        "subcommand. When both are set, the value on the subcommand wins."
     ),
     add_completion=False,
 )
@@ -88,6 +89,14 @@ _CommandSheet = Annotated[
         show_default=False,
     ),
 ]
+_CommandEncoding = Annotated[
+    Optional[str],
+    typer.Option(
+        "--encoding",
+        help="Character encoding for CSV/TSV input, such as utf8 or gbk",
+        show_default=False,
+    ),
+]
 
 
 def _apply_command_options(
@@ -95,6 +104,7 @@ def _apply_command_options(
     output_format: Optional[OutputFormat],
     delimiter: Optional[str],
     sheet: Optional[str],
+    encoding: Optional[str],
 ) -> _AppState:
     """Let flags after the subcommand override the same flags placed before it."""
     state = _get_state(ctx)
@@ -104,6 +114,8 @@ def _apply_command_options(
         state.delimiter = delimiter
     if sheet is not None:
         state.sheet = sheet
+    if encoding is not None:
+        state.encoding = encoding
     return state
 
 
@@ -112,7 +124,12 @@ def _get_reader(file_path: str, state: Optional[_AppState] = None) -> Any:
     from parq.reader import MultiFormatReader
 
     if state is not None:
-        return MultiFormatReader(file_path, delimiter=state.delimiter, sheet=state.sheet)
+        return MultiFormatReader(
+            file_path,
+            delimiter=state.delimiter,
+            sheet=state.sheet,
+            encoding=state.encoding,
+        )
     return MultiFormatReader(file_path)
 
 
@@ -173,12 +190,20 @@ def main(
             ),
         ),
     ] = None,
+    encoding: Annotated[
+        str,
+        typer.Option(
+            "--encoding",
+            help="Character encoding for CSV/TSV input (default: utf8)",
+        ),
+    ] = "utf8",
 ) -> None:
     """A powerful command-line tool for inspecting tabular files."""
     state = ctx.ensure_object(_AppState)
     state.output_format = output
     state.delimiter = delimiter
     state.sheet = sheet
+    state.encoding = encoding
 
     if version:
         from parq import __version__
@@ -202,9 +227,10 @@ def meta(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Display metadata information of a tabular file."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         with _get_reader(str(file), _get_state(ctx)) as reader:
@@ -222,9 +248,10 @@ def schema(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Display the schema of a tabular file."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         with _get_reader(str(file), _get_state(ctx)) as reader:
@@ -247,9 +274,10 @@ def head(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Display the first N rows of a tabular file."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         with _get_reader(str(file), _get_state(ctx)) as reader:
@@ -273,9 +301,10 @@ def tail(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Display the last N rows of a tabular file."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         with _get_reader(str(file), _get_state(ctx)) as reader:
@@ -294,9 +323,10 @@ def count(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Display the total row count of a tabular file."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         with _get_reader(str(file), _get_state(ctx)) as reader:
@@ -330,10 +360,11 @@ def split(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Split a source file into multiple files."""
 
-    state = _apply_command_options(ctx, output_format, delimiter, sheet)
+    state = _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
     formatter = _get_formatter(ctx)
     try:
         if file_count is None and record_count is None:
@@ -431,9 +462,10 @@ def stats(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Display simple per-column statistics."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         with _get_reader(str(file), _get_state(ctx)) as reader:
@@ -462,13 +494,14 @@ def convert(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Convert one supported input file to another supported output format.
 
     --output / -o selects rich, plain, or json. The destination file is the OUTPUT argument.
     """
 
-    state = _apply_command_options(ctx, output_format, delimiter, sheet)
+    state = _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
     formatter = _get_formatter(ctx)
 
     try:
@@ -533,8 +566,12 @@ def convert(
 @app.command()
 def diff(
     ctx: typer.Context,
-    left: Annotated[Path, typer.Argument(help="Left input file (.parquet, .csv, or .tsv)")],
-    right: Annotated[Path, typer.Argument(help="Right input file (.parquet, .csv, or .tsv)")],
+    left: Annotated[
+        Path, typer.Argument(help="Left input file (.parquet, .csv, .tsv, or .xlsx)")
+    ],
+    right: Annotated[
+        Path, typer.Argument(help="Right input file (.parquet, .csv, .tsv, or .xlsx)")
+    ],
     key: Annotated[str, typer.Option("--key", help="Comma-separated key columns for row matching")],
     columns: Annotated[
         Optional[str],
@@ -548,9 +585,10 @@ def diff(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Compare two tabular files using one or more key columns."""
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
 
     def operation(formatter: Any) -> None:
         from parq.reader import diff_files
@@ -565,6 +603,7 @@ def diff(
             summary_only=summary_only,
             delimiter=state.delimiter,
             sheet=state.sheet,
+            encoding=state.encoding,
         )
         formatter.print_diff_result(result)
 
@@ -585,10 +624,11 @@ def merge(
     output_format: _CommandOutputFormat = None,
     delimiter: _CommandDelimiter = None,
     sheet: _CommandSheet = None,
+    encoding: _CommandEncoding = None,
 ) -> None:
     """Merge multiple compatible input files into one output file."""
 
-    _apply_command_options(ctx, output_format, delimiter, sheet)
+    _apply_command_options(ctx, output_format, delimiter, sheet, encoding)
     formatter = _get_formatter(ctx)
     try:
         import time
@@ -635,6 +675,7 @@ def merge(
                     progress_callback=update_progress,
                     delimiter=state.delimiter,
                     sheet=state.sheet,
+                    encoding=state.encoding,
                 )
         else:
             total_rows = merge_files(
@@ -643,6 +684,7 @@ def merge(
                 force=force,
                 delimiter=state.delimiter,
                 sheet=state.sheet,
+                encoding=state.encoding,
             )
 
         formatter.print_merge_result(input_files, output, total_rows, time.time() - start_time)

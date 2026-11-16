@@ -3,7 +3,7 @@ Shared utilities, data structures, and statistics functions used across
 all format-specific reader modules.
 """
 
-from collections import deque
+import codecs
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -11,6 +11,26 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 FAST_PATH_ROWS_MULTIPLIER = 10
+
+
+def _validate_encoding(encoding: str) -> str:
+    """Return a text encoding name PyArrow can use, or raise ValueError.
+
+    A text encoding can encode a newline. Byte transforms such as ``rot_13``
+    cannot. ``punycode`` can encode text, but PyArrow passes a Buffer into the
+    decoder and that codec then raises AttributeError.
+    """
+    normalized = encoding.strip()
+    try:
+        "\n".encode(normalized)
+        codecs.getdecoder(normalized)(pa.py_buffer(b"\n"))
+    except (LookupError, UnicodeEncodeError, AttributeError, TypeError) as exc:
+        raise ValueError(f"Unknown encoding: {encoding}") from exc
+    except UnicodeError:
+        # The codec accepted the buffer and rejected these bytes. utf-16 does
+        # this for a lone newline; it is still a real text encoding.
+        return normalized
+    return normalized
 
 
 def _validate_delimiter(delimiter: str) -> None:
@@ -141,18 +161,24 @@ def _collect_tail_from_batches(
     n: int,
     schema: pa.Schema,
 ) -> pa.Table:
-    """Collect last n rows using per-column ring buffers."""
+    """Collect the last n rows from trailing Arrow batches."""
     if n == 0:
         return _create_empty_table(schema)
-    tail_columns = {field.name: deque(maxlen=n) for field in schema}
+    kept: list[pa.RecordBatch] = []
+    kept_rows = 0
     for batch in batches:
-        batch_dict = batch.to_pydict()
-        for name in schema.names:
-            tail_columns[name].extend(batch_dict[name])
-    if not tail_columns or not any(tail_columns.values()):
+        if len(batch) == 0:
+            continue
+        kept.append(batch)
+        kept_rows += len(batch)
+        while len(kept) > 1 and kept_rows - len(kept[0]) >= n:
+            kept_rows -= len(kept.pop(0))
+    if kept_rows == 0:
         return _create_empty_table(schema)
-    arrays = [pa.array(list(tail_columns[field.name]), type=field.type) for field in schema]
-    return pa.Table.from_arrays(arrays, schema=schema)
+    table = pa.Table.from_batches(kept, schema=schema)
+    if kept_rows > n:
+        return table.slice(kept_rows - n, n)
+    return table
 
 
 def _collect_preview_from_batches(

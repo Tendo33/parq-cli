@@ -11,6 +11,7 @@ Internal format-specific logic lives in parq/formats/:
 """
 
 import math
+from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, List, Optional, Union
@@ -33,6 +34,7 @@ from parq.formats._common import (
     _resolve_split_shape,
     _select_schema,
     _table_schema_info,
+    _validate_encoding,
     _validate_preview_params,
 )
 from parq.formats._csv import _iter_csv_batches, _scan_csv_metadata
@@ -67,6 +69,7 @@ class MultiFormatReader:
         file_path: str,
         delimiter: str = ",",
         sheet: Optional[str] = None,
+        encoding: str = "utf8",
     ):
         self.file_path = Path(file_path)
         if not self.file_path.exists():
@@ -85,6 +88,7 @@ class MultiFormatReader:
 
         self._delimiter = delimiter
         self._sheet = sheet
+        self._encoding = _validate_encoding(encoding)
 
         # Normalise input_format: tsv is handled like csv internally
         self.input_format = "csv" if suffix in {".csv", ".tsv"} else suffix.lstrip(".")
@@ -134,7 +138,10 @@ class MultiFormatReader:
             include_row_count and self._metadata_cache.num_rows is None
         ):
             self._metadata_cache = _scan_csv_metadata(
-                self.file_path, include_row_count=include_row_count, delimiter=self._delimiter
+                self.file_path,
+                include_row_count=include_row_count,
+                delimiter=self._delimiter,
+                encoding=self._encoding,
             )
         return self._metadata_cache
 
@@ -154,7 +161,12 @@ class MultiFormatReader:
         """Iterate non-parquet input in batches with format branching in one place."""
         metadata = self._load_metadata()
         if self.input_format == "csv":
-            yield from _iter_csv_batches(self.file_path, columns=columns, delimiter=self._delimiter)
+            yield from _iter_csv_batches(
+                self.file_path,
+                columns=columns,
+                delimiter=self._delimiter,
+                encoding=self._encoding,
+            )
             return
         if self._xlsx_cached_rows is not None:
             yield from _iter_cached_xlsx_rows(self._xlsx_cached_rows, metadata, columns=columns)
@@ -589,7 +601,33 @@ def _same_value(left: Any, right: Any) -> bool:
         if len(left) != len(right):
             return False
         return all(_same_value(item, other) for item, other in zip(left, right))
+    if _is_widened_text(left, right) or _is_widened_text(right, left):
+        return True
     return left == right
+
+
+def _is_widened_text(value: Any, text: Any) -> bool:
+    """Return whether text is the string XLSX stores when it widens this value.
+
+    Widening calls ``str(value)``. That text is the same cell. ``"01"``,
+    ``"1.0"`` for an integer, and ``"note"`` stay different. This does not
+    affect keys; those still use ``_normalize_key_part``.
+    """
+    if not isinstance(text, str) or isinstance(value, str) or value is None:
+        return False
+    if isinstance(value, bool):
+        return text == str(value)
+    if isinstance(value, Decimal):
+        if value.is_nan():
+            return False
+        return text == str(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return False
+        return text == str(value)
+    if isinstance(value, int) or isinstance(value, (datetime, date, time)):
+        return text == str(value)
+    return False
 
 
 def _bucket_key(key: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -958,19 +996,23 @@ def diff_files(
     summary_only: bool = False,
     delimiter: str = ",",
     sheet: Optional[str] = None,
+    encoding: str = "utf8",
 ) -> dict:
-    """Compute a keyed diff summary for two parquet, csv, or tsv files."""
+    """Compute a keyed diff summary for two supported tabular files."""
     if limit < 0:
         raise ValueError(f"limit must be non-negative, got {limit}")
     with (
-        MultiFormatReader(str(left_path), delimiter=delimiter, sheet=sheet) as left_reader,
-        MultiFormatReader(str(right_path), delimiter=delimiter, sheet=sheet) as right_reader,
+        MultiFormatReader(
+            str(left_path), delimiter=delimiter, sheet=sheet, encoding=encoding
+        ) as left_reader,
+        MultiFormatReader(
+            str(right_path), delimiter=delimiter, sheet=sheet, encoding=encoding
+        ) as right_reader,
     ):
-        if "xlsx" in {left_reader.input_format, right_reader.input_format}:
-            raise ValueError(
-                "diff currently supports parquet, csv, and tsv inputs; convert xlsx first with:\n"
-                "  parq convert input.xlsx output.parquet"
-            )
+        # XLSX schema inspection samples the first rows. A diff needs the full
+        # sheet so a later value can widen a column before types are compared.
+        left_reader._ensure_xlsx_types_for_full_read()
+        right_reader._ensure_xlsx_types_for_full_read()
 
         _validate_preview_params(0, left_reader.schema, key_columns)
         _validate_preview_params(0, right_reader.schema, key_columns)
@@ -1028,7 +1070,7 @@ def diff_files(
         "schema_only_right": (
             [] if summary_only else [{"column": name} for name in schema_only_right[:limit]]
         ),
-        "schema_type_mismatches": [] if summary_only else schema_type_mismatches[:limit],
+        "schema_type_mismatches": schema_type_mismatches[:limit],
         "only_left": [] if summary_only else row_diff["only_left"],
         "only_right": [] if summary_only else row_diff["only_right"],
         "changed_rows": [] if summary_only else row_diff["changed_rows"],
@@ -1057,6 +1099,7 @@ def merge_files(
     progress_callback: Optional[Callable[[int, int], None]] = None,
     delimiter: str = ",",
     sheet: Optional[str] = None,
+    encoding: str = "utf8",
 ) -> int:
     """Merge multiple compatible inputs into a single output file."""
     if len(input_paths) == 0:
@@ -1070,7 +1113,9 @@ def merge_files(
     readers: List[MultiFormatReader] = []
     try:
         for path in input_paths:
-            readers.append(MultiFormatReader(str(path), delimiter=delimiter, sheet=sheet))
+            readers.append(
+                MultiFormatReader(str(path), delimiter=delimiter, sheet=sheet, encoding=encoding)
+            )
         for reader in readers:
             reader._ensure_xlsx_types_for_full_read()
         schemas = [reader.schema for reader in readers]

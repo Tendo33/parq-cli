@@ -82,10 +82,10 @@ parq merge part-001.parquet part-002.parquet merged.parquet
 | `split` | 支持 | 支持 | 支持 | 支持 |
 | `stats` | 支持 | 支持 | 支持 | 支持 |
 | `convert` | 支持 | 支持 | 支持 | 支持 |
-| `diff` | 支持 | 支持 | 支持 | 先转换再对比 |
+| `diff` | 支持 | 支持 | 支持 | 支持 |
 | `merge` | 支持 | 支持 | 支持 | 支持 |
 
-`XLSX` 的读取使用 `python-calamine`，写出仍使用 `openpyxl`，两者都随 `parq-cli[xlsx]` 安装。公式单元格读取的是 Excel 已经算出的缓存值，没有缓存的公式会是空值。`.tsv` 按扩展名自动使用制表符；其它分隔符用 `--delimiter`。`--sheet` 选择 XLSX 工作表，对 `merge` 同样生效。
+`XLSX` 的读取使用 `python-calamine`，写出仍使用 `openpyxl`，两者都随 `parq-cli[xlsx]` 安装。公式单元格读取的是 Excel 已经算出的缓存值，没有缓存的公式会是空值。`.tsv` 按扩展名自动使用制表符；其它分隔符用 `--delimiter`。`--sheet` 选择 XLSX 工作表，对 `diff` 和 `merge` 同样生效。CSV/TSV 默认按 UTF-8 读取，其它编码用 `--encoding`（例如 `gbk`）。写出仍然是 UTF-8。
 
 ## 命令说明
 
@@ -203,12 +203,13 @@ parq diff LEFT RIGHT --key id --summary-only
 说明：
 
 - `--key` 必填
-- `diff` 当前支持 Parquet、CSV 和 TSV
-- 全局 `--delimiter` 会同时用于左右两个 CSV 输入
-- XLSX 需要先转换
+- 输入可以是 Parquet、CSV、TSV 或 XLSX
+- `--delimiter`、`--encoding` 和 `--sheet` 会同时用于左右两个输入
+- XLSX 对比会完整解析选中的工作表，第 1000 行之后的值也能放宽列类型后再比较
+- 类型不同一定会报告。`str(value)` 得到的文本不算单元格修改，其它文本算。主键仍按原值匹配，`1` 和 `"1"` 对不上
 - 任一侧若出现重复 key，会直接报错
 - 单侧超过 10 万行时，会把数据按主键散列到临时文件，而不是把全部 key 放进内存
-- `--summary-only` 只保留计数，不输出样本内容
+- `--summary-only` 保留计数和类型差异，不输出变更行样本
 
 ### `merge`
 
@@ -224,7 +225,7 @@ parq merge chunks/*.parquet merged.parquet
 - schema 必须一致，或能被 Arrow 安全统一
 - 默认遇到已存在的输出文件会报错；`--force` / `-F` 会覆盖
 - 输出格式由输出文件后缀决定，包括 `.tsv`
-- 全局 `--delimiter` 和 `--sheet` 会作用于每一个输入
+- 全局 `--delimiter`、`--encoding` 和 `--sheet` 会作用于每一个输入
 
 ## 输出模式
 
@@ -233,10 +234,11 @@ parq merge chunks/*.parquet merged.parquet
 - `--version`, `-v`：显示版本号。放在子命令前面：`parq --version`
 - `--output`, `-o`：选择输出格式（`rich` | `plain` | `json`）
 - `--delimiter`, `-d`：CSV/TSV 输入分隔符，默认 `,`；`.tsv` 会自动使用制表符
+- `--encoding`：CSV/TSV 输入编码，默认 `utf8`。写出仍然是 UTF-8
 - `--sheet`：XLSX 工作表名称或从 0 开始的序号，默认活动工作表。纯数字会按序号处理，名叫 `1` 或 `2` 的工作表也一样
 - `--help`：显示帮助
 
-`--output`、`--delimiter`、`--sheet` 可以写在子命令前面，也可以写在子命令上面。同一个选项两处都写时，子命令上的值生效。`convert` 的 `--output` / `-o` 仍然是显示格式，目标文件是位置参数 `OUTPUT`。
+`--output`、`--delimiter`、`--sheet`、`--encoding` 可以写在子命令前面，也可以写在子命令上面。同一个选项两处都写时，子命令上的值生效。`convert` 的 `--output` / `-o` 仍然是显示格式，目标文件是位置参数 `OUTPUT`。
 
 可选输出模式：
 
@@ -256,11 +258,11 @@ parq diff left.parquet right.parquet --key id --summary-only --output json
 
 ## 大文件说明
 
-- Parquet 的元数据、行数和预览会优先利用 Arrow metadata 与 row group 能力。
-- CSV `tail` 使用固定大小列窗口，而不是把整份数据都转成 Python dict。
+- Parquet 的元数据和行数来自文件 footer。`head` 拿到请求的行数就停，包括这些行落在同一个大 row group 里的情况。`tail` 只读包含末尾行的 row group。
+- CSV `tail` 扫一遍文件，保留末尾的 Arrow batch，再切出最后几行。
 - CSV 的 `split --record-count` 和 `convert` 单遍流式处理，进度条保持不确定状态，因为行数要等这一遍结束才知道。
 - 对大 CSV/XLSX，`meta --fast` 是最快的元数据探查入口。
-- `parq schema` 和较短的 `head` 对 XLSX 只采样前 1000 行。`count`、`tail`、`stats`、`convert`、`split`、`merge` 把选中的工作表解析一次，后续值放不进样本类型时放宽该列，并把这些行留在内存里复用。
+- `parq schema` 和较短的 `head` 对 XLSX 只采样前 1000 行。`count`、`tail`、`stats`、`convert`、`split`、`merge`、`diff` 把选中的工作表解析一次，后续值放不进样本类型时放宽该列，并把这些行留在内存里复用。
 
 如果你会反复处理大文件，把 CSV/XLSX 先转成 Parquet 依然是吞吐量最好的路径。
 

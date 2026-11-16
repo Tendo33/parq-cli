@@ -159,6 +159,43 @@ class TestParquetReader:
         result = reader.read_head(2)
         assert result["id"].to_pylist() == [0, 1]
 
+    def test_read_head_stops_inside_a_single_large_row_group(self, tmp_path, monkeypatch):
+        """head of a large single row group should not read the whole group."""
+        file_path = tmp_path / "one_group.parquet"
+        table = pa.table({"id": list(range(10_000)), "value": [f"v{i}" for i in range(10_000)]})
+        pq.write_table(table, file_path)
+
+        reader = ParquetReader(str(file_path))
+        assert reader.num_row_groups == 1
+
+        def fail_read(*args, **kwargs):
+            raise AssertionError("head should stop before reading the whole row group")
+
+        monkeypatch.setattr(reader._parquet_file, "read", fail_read)
+        result = reader.read_head(5, columns=["id"])
+        assert result.column_names == ["id"]
+        assert result["id"].to_pylist() == [0, 1, 2, 3, 4]
+
+    def test_read_head_does_not_pull_a_fixed_8192_row_batch(self, tmp_path, monkeypatch):
+        """head(5) should request 5 rows, including across tiny row groups."""
+        file_path = tmp_path / "tiny_groups.parquet"
+        pq.write_table(pa.table({"id": list(range(20_000))}), file_path, row_group_size=10)
+        reader = ParquetReader(str(file_path))
+        pulled = {"rows": 0, "batch_size": None}
+        original = reader._parquet_file.iter_batches
+
+        def counting_batches(*args, **kwargs):
+            pulled["batch_size"] = kwargs.get("batch_size")
+            for batch in original(*args, **kwargs):
+                pulled["rows"] += len(batch)
+                yield batch
+
+        monkeypatch.setattr(reader._parquet_file, "iter_batches", counting_batches)
+        result = reader.read_head(5)
+        assert result["id"].to_pylist() == [0, 1, 2, 3, 4]
+        assert pulled["batch_size"] == 5
+        assert pulled["rows"] == 5
+
     def test_read_tail(self, sample_parquet_file):
         """Test reading last N rows."""
         reader = ParquetReader(str(sample_parquet_file))
@@ -1195,3 +1232,146 @@ class TestMultiFormatReader:
         )
         assert seen
         assert all(total == 0 for _current, total in seen)
+
+    def test_collect_tail_slices_trailing_batches(self):
+        """Tail keeps the trailing batches, including a null that starts the window."""
+        from parq.formats._common import _collect_tail_from_batches
+
+        schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+        batches = [
+            pa.record_batch(
+                [pa.array([1, 2]), pa.array(["a", None])],
+                schema=schema,
+            ),
+            pa.record_batch(
+                [pa.array([3, 4, 5]), pa.array(["c", "d", "e"])],
+                schema=schema,
+            ),
+        ]
+
+        table = _collect_tail_from_batches(batches, 4, schema)
+        assert table["id"].to_pylist() == [2, 3, 4, 5]
+        assert table["name"].to_pylist() == [None, "c", "d", "e"]
+
+    def test_csv_encoding_decodes_gbk(self, tmp_path):
+        """An explicit encoding should decode bytes the default UTF-8 read would keep raw."""
+        file_path = tmp_path / "gbk.csv"
+        file_path.write_bytes("id,name\n1,张三\n".encode("gbk"))
+
+        reader = MultiFormatReader(str(file_path), encoding="gbk")
+        assert reader.read_head(1)["name"].to_pylist() == ["张三"]
+
+    def test_unknown_encoding_is_rejected(self, tmp_path):
+        """A codec Python does not know should fail before CSV parsing."""
+        file_path = tmp_path / "data.csv"
+        file_path.write_text("id\n1\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Unknown encoding"):
+            MultiFormatReader(str(file_path), encoding="nope")
+        with pytest.raises(ValueError, match="Unknown encoding"):
+            MultiFormatReader(str(file_path), encoding="rot_13")
+        with pytest.raises(ValueError, match="Unknown encoding"):
+            MultiFormatReader(str(file_path), encoding="punycode")
+
+    def test_diff_xlsx_reports_changed_rows(self, tmp_path):
+        """diff should compare two workbooks without converting them first."""
+        openpyxl = pytest.importorskip("openpyxl")
+
+        def write_workbook(path: Path, value: str) -> None:
+            workbook = openpyxl.Workbook()
+            worksheet = workbook.active
+            worksheet.append(["id", "value"])
+            worksheet.append([1, "same"])
+            worksheet.append([2, value])
+            workbook.save(path)
+            workbook.close()
+
+        left = tmp_path / "left.xlsx"
+        right = tmp_path / "right.xlsx"
+        write_workbook(left, "left")
+        write_workbook(right, "right")
+
+        result = diff_files(left, right, ["id"])
+        assert result["changed_count"] == 1
+        assert result["only_left_count"] == 0
+        assert result["only_right_count"] == 0
+
+    def test_diff_widened_number_text_is_not_an_edit(self, tmp_path):
+        """str(number) is the widened cell. Any other text is still an edit."""
+        openpyxl = pytest.importorskip("openpyxl")
+
+        def write_workbook(path: Path, late: object) -> None:
+            workbook = openpyxl.Workbook()
+            worksheet = workbook.active
+            worksheet.append(["id", "value"])
+            worksheet.append([1, 1])
+            worksheet.append([2, late])
+            workbook.save(path)
+            workbook.close()
+
+        left = tmp_path / "left.xlsx"
+        same_text = tmp_path / "same.xlsx"
+        other_text = tmp_path / "other.xlsx"
+        write_workbook(left, 2)
+        write_workbook(same_text, "2")
+        write_workbook(other_text, "note")
+
+        same = diff_files(left, same_text, ["id"])
+        changed = diff_files(left, other_text, ["id"])
+        summary = diff_files(left, same_text, ["id"], summary_only=True)
+
+        assert same["changed_count"] == 0
+        assert same["only_left_count"] == 0
+        assert same["only_right_count"] == 0
+        assert any(item["column"] == "value" for item in same["schema_type_mismatches"])
+        assert summary["schema_type_mismatches"] == same["schema_type_mismatches"]
+        assert summary["changed_rows"] == []
+        assert changed["changed_count"] == 1
+        assert changed["changed_rows"][0]["key"] == 2
+        assert changed["changed_rows"][0]["right"]["value"] == "note"
+
+    def test_diff_keeps_other_number_text_and_exact_keys(self, tmp_path):
+        """Padded text is an edit, and the text of a number is not the same key."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(pa.table({"id": [1, 2, 3], "value": [1, 2, 3]}), left)
+        pq.write_table(pa.table({"id": [1, 2, 3], "value": ["1", "9", "03"]}), right)
+
+        result = diff_files(left, right, ["id"])
+        assert result["changed_count"] == 2
+        assert {row["key"] for row in result["changed_rows"]} == {2, 3}
+        assert any(item["column"] == "value" for item in result["schema_type_mismatches"])
+
+        key_left = tmp_path / "key-left.parquet"
+        key_right = tmp_path / "key-right.parquet"
+        pq.write_table(pa.table({"id": [1], "value": ["a"]}), key_left)
+        pq.write_table(pa.table({"id": ["1"], "value": ["a"]}), key_right)
+        keyed = diff_files(key_left, key_right, ["id"])
+        assert keyed["changed_count"] == 0
+        assert keyed["only_left_count"] == 1
+        assert keyed["only_right_count"] == 1
+        assert any(item["column"] == "id" for item in keyed["schema_type_mismatches"])
+
+    def test_diff_xlsx_uses_types_past_the_sample_window(self, tmp_path):
+        """A value after the 1000-row sample should widen the column before comparison."""
+        openpyxl = pytest.importorskip("openpyxl")
+
+        def write_workbook(path: Path, late: object) -> None:
+            workbook = openpyxl.Workbook()
+            worksheet = workbook.active
+            worksheet.append(["id", "value"])
+            for index in range(1000):
+                worksheet.append([index, index])
+            worksheet.append([1000, late])
+            workbook.save(path)
+            workbook.close()
+
+        left = tmp_path / "left.xlsx"
+        right = tmp_path / "right.xlsx"
+        write_workbook(left, "late")
+        write_workbook(right, 1000)
+
+        result = diff_files(left, right, ["id"])
+        mismatches = [item for item in result["schema_type_mismatches"] if item["column"] == "value"]
+        assert len(mismatches) == 1
+        assert mismatches[0]["left_type"] != mismatches[0]["right_type"]

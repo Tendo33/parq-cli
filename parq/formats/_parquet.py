@@ -126,28 +126,58 @@ class ParquetReader:
         if n == 0:
             return _create_empty_table(self.schema, columns=columns)
 
+        if not from_tail:
+            return self._read_head_rows(n, columns)
+
+        # Tail cannot stop inside a row group, so a single group is read whole.
         if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER or self.num_row_groups == 1:
             table = self._parquet_file.read(columns=columns)
-            start = max(0, self.num_rows - n) if from_tail else 0
-            length = n if from_tail else min(n, self.num_rows)
-            return table.slice(start, length)
+            start = max(0, self.num_rows - n)
+            return table.slice(start, n)
 
         rows_remaining = n
         row_groups = []
-        indices = (
-            range(self.num_row_groups - 1, -1, -1) if from_tail else range(self.num_row_groups)
-        )
+        indices = range(self.num_row_groups - 1, -1, -1)
         for row_group_index in indices:
             row_groups.append(row_group_index)
             rows_remaining -= self.metadata.row_group(row_group_index).num_rows
             if rows_remaining <= 0:
                 break
 
-        if from_tail:
-            row_groups.reverse()
+        row_groups.reverse()
         table = self._parquet_file.read_row_groups(row_groups, columns=columns)
-        start = max(0, len(table) - n) if from_tail else 0
-        return table.slice(start, n)
+        return table.slice(max(0, len(table) - n), n)
+
+    def _read_head_rows(self, n: int, columns: Optional[List[str]]) -> pa.Table:
+        """Read the first n rows, stopping inside a large row group."""
+        if self.num_rows <= n * FAST_PATH_ROWS_MULTIPLIER:
+            table = self._parquet_file.read(columns=columns)
+            return table.slice(0, min(n, self.num_rows))
+
+        selected_schema = _select_schema(self.schema, columns)
+        batches: list[pa.RecordBatch] = []
+        rows_collected = 0
+        batch_reader = self._parquet_file.iter_batches(
+            batch_size=min(n, 65536),
+            columns=columns,
+        )
+        try:
+            for batch in batch_reader:
+                need = n - rows_collected
+                if len(batch) > need:
+                    batches.append(batch.slice(0, need))
+                    break
+                batches.append(batch)
+                rows_collected += len(batch)
+                if rows_collected >= n:
+                    break
+        finally:
+            close = getattr(batch_reader, "close", None)
+            if close is not None:
+                close()
+        if not batches:
+            return _create_empty_table(self.schema, columns=columns)
+        return pa.Table.from_batches(batches, schema=selected_schema)
 
     def read_head(self, n: int = 5, columns: Optional[List[str]] = None) -> pa.Table:
         """Read first n rows."""
