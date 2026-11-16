@@ -904,6 +904,44 @@ class TestCLI:
         assert result.exit_code == 0, result.stderr
         assert "张三" in result.output
 
+    def test_head_rejects_csv_that_default_encoding_cannot_decode(self, tmp_path):
+        """A GBK file read as UTF-8 should exit 1 instead of printing raw bytes."""
+        csv_file = tmp_path / "gbk.csv"
+        csv_file.write_bytes("id,name\n1,张三\n".encode("gbk"))
+
+        result = runner.invoke(app, ["--output", "plain", "head", str(csv_file)])
+
+        assert result.exit_code == 1
+        assert "Could not decode column 'name' as utf8" in result.stderr
+        assert "张三" not in result.output
+
+    def test_head_rejects_csv_header_that_default_encoding_cannot_decode(self, tmp_path):
+        """A GBK header read as UTF-8 should exit 1 with the column number."""
+        csv_file = tmp_path / "gbk.csv"
+        csv_file.write_bytes("id,姓名\n1,张三\n".encode("gbk"))
+
+        result = runner.invoke(app, ["--output", "plain", "head", str(csv_file)])
+
+        assert result.exit_code == 1
+        assert "Could not decode column 2 header as utf8" in result.stderr
+
+    def test_head_rejects_utf16_csv(self, tmp_path):
+        """A UTF-16 CSV should exit 1 and name UTF-16, then read with --encoding."""
+        csv_file = tmp_path / "utf16.csv"
+        csv_file.write_bytes("id,name\n1,张三\n".encode("utf-16"))
+
+        result = runner.invoke(app, ["--output", "plain", "head", str(csv_file)])
+
+        assert result.exit_code == 1
+        assert "utf-16" in result.stderr
+
+        decoded = runner.invoke(
+            app,
+            ["--encoding", "utf-16", "--output", "plain", "head", str(csv_file)],
+        )
+        assert decoded.exit_code == 0, decoded.stderr
+        assert "张三" in decoded.output
+
     def test_head_rejects_unknown_encoding(self, tmp_path):
         """An unknown encoding should exit 1 with the codec error."""
         csv_file = tmp_path / "data.csv"

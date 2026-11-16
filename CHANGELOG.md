@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `diff` can sample rows whose keys are null next to numbers or strings. A Decimal NaN key matches another Decimal NaN. A list or struct column used as a key is rejected with the column name.
+- A CSV or TSV column that cannot be decoded with `--encoding` fails the read, including a header whose name is not valid in that encoding. A bad byte after the first block names that column. UTF-16 read as UTF-8 reports the NUL bytes instead of a column-count error. PyArrow would otherwise return an undecoded data column as raw bytes.
 - Parquet `head` stops after the requested rows, including inside one large row group. A preview no longer reads that whole group.
 - Streamed `tail` keeps the trailing Arrow batches and slices them. CSV `tail` no longer converts every cell to Python.
 

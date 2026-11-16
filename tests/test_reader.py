@@ -863,6 +863,72 @@ class TestMultiFormatReader:
         with pytest.raises(ValueError, match="Duplicate key"):
             diff_files(left, right, ["id"])
 
+    def test_diff_reports_null_keys_beside_other_keys(self, tmp_path):
+        """Null keys sort with numbers and strings instead of raising TypeError."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(pa.table({"id": [10, None, 2], "value": ["a", "b", "c"]}), left)
+        pq.write_table(pa.table({"id": [0], "value": ["z"]}), right)
+
+        result = diff_files(left, right, ["id"])
+
+        assert [row["key"] for row in result["only_left"]] == [None, 2, 10]
+
+        pq.write_table(pa.table({"id": ["b", None, "a"], "value": [1, 2, 3]}), left)
+        pq.write_table(pa.table({"id": ["a"], "value": [3]}), right)
+        result = diff_files(left, right, ["id"])
+        assert [row["key"] for row in result["only_left"]] == [None, "b"]
+
+    def test_diff_sorts_composite_keys_when_one_part_is_null(self, tmp_path):
+        """A tied prefix must not compare the remaining null with a string."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(
+            pa.table({"id": [1, 1], "part": [None, "b"], "value": ["x", "y"]}),
+            left,
+        )
+        pq.write_table(pa.table({"id": [1], "part": ["a"], "value": ["z"]}), right)
+
+        result = diff_files(left, right, ["id", "part"])
+
+        assert result["only_left"] == [{"key": (1, None)}, {"key": (1, "b")}]
+
+    def test_diff_rejects_list_keys(self, tmp_path):
+        """A list column is not a key, and the error names that column."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(pa.table({"id": [[1], [2]], "value": ["a", "b"]}), left)
+        pq.write_table(pa.table({"id": [[1]], "value": ["a"]}), right)
+
+        with pytest.raises(ValueError, match="Key column 'id' contains a list"):
+            diff_files(left, right, ["id"])
+
+        struct_type = pa.struct([("a", pa.int64())])
+        pq.write_table(
+            pa.table({"id": pa.array([{"a": 1}], type=struct_type), "value": ["a"]}),
+            left,
+        )
+        pq.write_table(
+            pa.table({"id": pa.array([{"a": 1}], type=struct_type), "value": ["a"]}),
+            right,
+        )
+        with pytest.raises(ValueError, match="Key column 'id' contains a struct"):
+            diff_files(left, right, ["id"])
+
+    def test_decimal_nan_keys_match_and_sort(self):
+        """Decimal NaN matches itself, and nulls stay ahead of numeric order."""
+        from decimal import Decimal
+
+        from parq.reader import _row_key, _sorted_diff_keys
+
+        quiet = _row_key({"id": Decimal("NaN")}, ["id"])
+        signaling = _row_key({"id": Decimal("sNaN")}, ["id"])
+        assert quiet == signaling
+        ordered = _sorted_diff_keys(
+            [(Decimal("10"),), quiet, (None,), (Decimal("2"),)]
+        )
+        assert ordered == [(None,), quiet, (Decimal("2"),), (Decimal("10"),)]
+
     def test_diff_and_merge_close_parquet_readers(self, tmp_path, monkeypatch):
         """Parquet handles are released even when the operation succeeds."""
         from parq.reader import merge_files
@@ -1254,12 +1320,73 @@ class TestMultiFormatReader:
         assert table["name"].to_pylist() == [None, "c", "d", "e"]
 
     def test_csv_encoding_decodes_gbk(self, tmp_path):
-        """An explicit encoding should decode bytes the default UTF-8 read would keep raw."""
+        """An explicit encoding should decode bytes the default UTF-8 read would reject."""
         file_path = tmp_path / "gbk.csv"
         file_path.write_bytes("id,name\n1,张三\n".encode("gbk"))
 
         reader = MultiFormatReader(str(file_path), encoding="gbk")
         assert reader.read_head(1)["name"].to_pylist() == ["张三"]
+
+    def test_default_encoding_rejects_undecoded_csv_column(self, tmp_path):
+        """A column PyArrow would keep as raw bytes should fail before any row is returned."""
+        file_path = tmp_path / "gbk.csv"
+        file_path.write_bytes("id,name\n1,张三\n".encode("gbk"))
+
+        reader = MultiFormatReader(str(file_path))
+        with pytest.raises(ValueError, match="Could not decode column 'name' as utf8"):
+            reader.schema
+
+    def test_default_encoding_rejects_undecoded_csv_header(self, tmp_path):
+        """A GBK header should fail with the encoding error, naming its 1-based column."""
+        file_path = tmp_path / "gbk.csv"
+        file_path.write_bytes("id,姓名\n1,张三\n".encode("gbk"))
+
+        reader = MultiFormatReader(str(file_path))
+        with pytest.raises(ValueError, match="Could not decode column 2 header as utf8"):
+            reader.schema
+
+        decoded = MultiFormatReader(str(file_path), encoding="gbk")
+        table = decoded.read_head(1)
+        assert table.column_names == ["id", "姓名"]
+        assert table["姓名"].to_pylist() == ["张三"]
+
+    def test_invalid_utf8_after_first_block_names_the_column(self, tmp_path):
+        """A bad byte past the first block should use the encoding error and the column name."""
+        file_path = tmp_path / "late.csv"
+        row = "1," + ("x" * 80) + "\n"
+        file_path.write_bytes(("id,name\n" + (row * 20000)).encode("utf-8") + b"2,bad\xff\n")
+
+        reader = MultiFormatReader(str(file_path))
+        assert reader.schema.names == ["id", "name"]
+        with pytest.raises(ValueError, match="Could not decode column 'name' as utf8"):
+            _ = reader.num_rows
+
+    def test_utf16_reads_fail_with_an_encoding_error(self, tmp_path):
+        """UTF-16 bytes should not be reported as the wrong number of columns."""
+        bom = tmp_path / "bom.csv"
+        bom.write_bytes("id,name\n1,张三\n".encode("utf-16"))
+        with pytest.raises(ValueError, match="utf-16"):
+            MultiFormatReader(str(bom)).schema
+        decoded = MultiFormatReader(str(bom), encoding="utf-16")
+        assert decoded.read_head(1)["name"].to_pylist() == ["张三"]
+
+        big_endian = tmp_path / "be.csv"
+        big_endian.write_bytes("id,name\n1,alice\n".encode("utf-16-be"))
+        with pytest.raises(ValueError, match="NUL bytes"):
+            MultiFormatReader(str(big_endian)).schema
+
+    def test_ragged_csv_keeps_the_parse_error(self, tmp_path):
+        """A short row stays a parse error, including text that looks like an encoding failure."""
+        cases = {
+            "short.csv": b"id,name\n1,alice\n2\n",
+            "phrase.csv": b"id,name\n1,alice\ninvalid UTF8\n",
+            "nul.csv": b"id,name\n1,alice\n1\x00\n",
+        }
+        for name, payload in cases.items():
+            file_path = tmp_path / name
+            file_path.write_bytes(payload)
+            with pytest.raises(pa.ArrowInvalid, match="Expected 2 columns"):
+                MultiFormatReader(str(file_path)).schema
 
     def test_unknown_encoding_is_rejected(self, tmp_path):
         """A codec Python does not know should fail before CSV parsing."""

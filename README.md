@@ -97,7 +97,7 @@ parq merge chunks/*.parquet merged.parquet --force         # overwrite if exists
 | `diff` | yes | yes | yes | yes |
 | `merge` | yes | yes | yes | yes |
 
-`XLSX` reads use `python-calamine` and writes use `openpyxl`; both install with `parq-cli[xlsx]`. Formula cells are read from Excel's cached value, so a formula Excel has not calculated comes back empty. TSV files are auto-detected by the `.tsv` extension; a custom delimiter can be supplied with `--delimiter`. CSV and TSV reads default to UTF-8. Pass `--encoding gbk` (or another codec name) for a different input encoding. Writes stay UTF-8.
+`XLSX` reads use `python-calamine` and writes use `openpyxl`; both install with `parq-cli[xlsx]`. Formula cells are read from Excel's cached value, so a formula Excel has not calculated comes back empty. TSV files are auto-detected by the `.tsv` extension; a custom delimiter can be supplied with `--delimiter`. CSV and TSV reads default to UTF-8. Pass `--encoding gbk` (or another codec name) for a different input encoding. A column that does not decode with that encoding fails the read, including a header whose name is not valid in that encoding. UTF-16 read as UTF-8 fails the same way. Writes stay UTF-8.
 
 ## Command Reference
 
@@ -226,6 +226,7 @@ Notes:
 - XLSX diff parses the selected sheet in full, so a later value can widen a column before types are compared
 - a type difference is always reported. The text from `str(value)` is not a cell edit; any other text is. Keys stay exact, so `1` and `"1"` do not match
 - duplicate keys on either side are treated as an error
+- null keys are included in the sample. A list or struct column cannot be a key
 - inputs larger than 100,000 rows on a side spill into temporary files instead of holding every key in memory
 - `--summary-only` keeps the counts and the type mismatches, and omits sample row payloads
 

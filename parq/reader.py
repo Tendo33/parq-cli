@@ -520,8 +520,9 @@ def _build_diff_index(
     for row in _iter_row_dicts(reader, selected_columns):
         key = _row_key(row, key_columns)
         if key in index:
-            rendered_key = key if len(key) > 1 else key[0]
-            raise ValueError(f"Duplicate key found in {side_name} input: {rendered_key}")
+            raise ValueError(
+                f"Duplicate key found in {side_name} input: {_render_key(key)}"
+            )
         index[key] = {column: row[column] for column in comparable_columns}
     return index
 
@@ -540,7 +541,15 @@ def _empty_row_diff() -> dict:
 
 def _render_key(key: tuple[Any, ...]) -> Any:
     """Render a one-column key as a scalar and a composite key as a tuple."""
-    return key if len(key) > 1 else key[0]
+    rendered = tuple(_render_key_part(part) for part in key)
+    return rendered if len(rendered) > 1 else rendered[0]
+
+
+def _render_key_part(part: Any) -> Any:
+    """Show a Decimal NaN sentinel as Decimal NaN in diff output."""
+    if isinstance(part, _DecimalNaNKey):
+        return Decimal("NaN")
+    return part
 
 
 class _NaNKey(float):
@@ -563,10 +572,32 @@ class _NaNKey(float):
 _NAN_KEY = _NaNKey()
 
 
+class _DecimalNaNKey:
+    """Decimal NaN that compares equal to itself so it can be a diff key.
+
+    ``Decimal('NaN')`` is not equal to itself, and ``Decimal('sNaN')`` cannot
+    be hashed. One sentinel covers both.
+    """
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _DecimalNaNKey)
+
+    def __repr__(self) -> str:
+        return "Decimal('NaN')"
+
+
+_DECIMAL_NAN_KEY = _DecimalNaNKey()
+
+
 def _normalize_key_part(part: Any) -> Any:
     """Map values that should match as one key onto a stable, hashable form."""
     if isinstance(part, float) and math.isnan(part):
         return _NAN_KEY
+    if isinstance(part, Decimal) and part.is_nan():
+        return _DECIMAL_NAN_KEY
     if isinstance(part, float) and part == 0:
         return 0.0
     return part
@@ -574,7 +605,53 @@ def _normalize_key_part(part: Any) -> Any:
 
 def _row_key(row: dict[str, Any], key_columns: List[str]) -> tuple[Any, ...]:
     """Build a hashable key, treating NaN and signed zero as one value."""
-    return tuple(_normalize_key_part(row[column]) for column in key_columns)
+    parts = []
+    for column in key_columns:
+        part = _normalize_key_part(row[column])
+        if isinstance(part, (list, dict)):
+            kind = "list" if isinstance(part, list) else "struct"
+            raise ValueError(f"Key column '{column}' contains a {kind}, which cannot be a key")
+        parts.append(part)
+    return tuple(parts)
+
+
+def _key_part_sort_token(part: Any) -> tuple[Any, ...]:
+    """Order one key part without asking Python to compare unrelated types.
+
+    Null sorts first. Decimal NaN is kept out of Decimal comparison, which
+    raises ``InvalidOperation``. ``datetime`` is checked before ``date``
+    because a datetime is a date.
+    """
+    if part is None:
+        return (0,)
+    if isinstance(part, float) and math.isnan(part):
+        return (1,)
+    if isinstance(part, bool):
+        return (2, part)
+    if isinstance(part, int):
+        return (3, part)
+    if isinstance(part, float):
+        return (4, part)
+    if isinstance(part, _DecimalNaNKey) or (isinstance(part, Decimal) and part.is_nan()):
+        return (5,)
+    if isinstance(part, Decimal):
+        return (6, part)
+    if isinstance(part, str):
+        return (7, part)
+    if isinstance(part, datetime):
+        return (8, part)
+    if isinstance(part, date):
+        return (9, part)
+    if isinstance(part, time):
+        return (10, part)
+    if isinstance(part, (bytes, bytearray)):
+        return (11, bytes(part))
+    return (12, type(part).__name__, repr(part))
+
+
+def _sorted_diff_keys(keys: Iterable[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    """Return diff keys in a stable order, including nulls and Decimal NaN."""
+    return sorted(keys, key=lambda key: tuple(_key_part_sort_token(part) for part in key))
 
 
 def _same_value(left: Any, right: Any) -> bool:
@@ -726,8 +803,8 @@ def _diff_rows_in_memory(
 
     remaining_indexed_count = len(indexed_rows)
     if not summary_only:
-        remaining_indexed_keys = sorted(indexed_rows.keys())[:limit]
-        missing_from_indexed.sort()
+        remaining_indexed_keys = _sorted_diff_keys(indexed_rows)[:limit]
+        missing_from_indexed = _sorted_diff_keys(missing_from_indexed)
         only_left_keys = remaining_indexed_keys if index_left else missing_from_indexed
         only_right_keys = missing_from_indexed if index_left else remaining_indexed_keys
     else:
@@ -770,8 +847,9 @@ def _spill_reader_to_buckets(
             batch_dict = batch.to_pydict()
             bucket_indices: List[List[int]] = [[] for _ in range(num_buckets)]
             for row_idx in range(len(batch)):
-                key = tuple(
-                    _normalize_key_part(batch_dict[column][row_idx]) for column in key_columns
+                key = _row_key(
+                    {column: batch_dict[column][row_idx] for column in key_columns},
+                    key_columns,
                 )
                 bucket = _stable_bucket(key, num_buckets, salt)
                 bucket_indices[bucket].append(row_idx)

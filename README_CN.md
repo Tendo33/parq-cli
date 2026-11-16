@@ -85,7 +85,7 @@ parq merge part-001.parquet part-002.parquet merged.parquet
 | `diff` | 支持 | 支持 | 支持 | 支持 |
 | `merge` | 支持 | 支持 | 支持 | 支持 |
 
-`XLSX` 的读取使用 `python-calamine`，写出仍使用 `openpyxl`，两者都随 `parq-cli[xlsx]` 安装。公式单元格读取的是 Excel 已经算出的缓存值，没有缓存的公式会是空值。`.tsv` 按扩展名自动使用制表符；其它分隔符用 `--delimiter`。`--sheet` 选择 XLSX 工作表，对 `diff` 和 `merge` 同样生效。CSV/TSV 默认按 UTF-8 读取，其它编码用 `--encoding`（例如 `gbk`）。写出仍然是 UTF-8。
+`XLSX` 的读取使用 `python-calamine`，写出仍使用 `openpyxl`，两者都随 `parq-cli[xlsx]` 安装。公式单元格读取的是 Excel 已经算出的缓存值，没有缓存的公式会是空值。`.tsv` 按扩展名自动使用制表符；其它分隔符用 `--delimiter`。`--sheet` 选择 XLSX 工作表，对 `diff` 和 `merge` 同样生效。CSV/TSV 默认按 UTF-8 读取，其它编码用 `--encoding`（例如 `gbk`）。某一列无法按该编码解码时，读取会失败，表头对不上该编码时也一样。把 UTF-16 当成 UTF-8 读取同样会失败。写出仍然是 UTF-8。
 
 ## 命令说明
 
@@ -208,6 +208,7 @@ parq diff LEFT RIGHT --key id --summary-only
 - XLSX 对比会完整解析选中的工作表，第 1000 行之后的值也能放宽列类型后再比较
 - 类型不同一定会报告。`str(value)` 得到的文本不算单元格修改，其它文本算。主键仍按原值匹配，`1` 和 `"1"` 对不上
 - 任一侧若出现重复 key，会直接报错
+- 空主键会进入样本。列表或结构体列不能当主键
 - 单侧超过 10 万行时，会把数据按主键散列到临时文件，而不是把全部 key 放进内存
 - `--summary-only` 保留计数和类型差异，不输出变更行样本
 
