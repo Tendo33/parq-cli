@@ -4,9 +4,6 @@
 用法:
     python scripts/check_version.py
 """
-# {{CHENGQI:
-# Action: Added; Timestamp: 2025-11-17; Reason: 创建版本检查工具防止PyPI冲突; Principle_Applied: 防御性编程;
-# }}
 
 import json
 import re

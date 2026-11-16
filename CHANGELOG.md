@@ -2,15 +2,17 @@
 
 ## Unreleased
 
-- `diff` can sample rows whose keys are null next to numbers or strings. A Decimal NaN key matches another Decimal NaN. A list or struct column used as a key is rejected with the column name.
-- A CSV or TSV column that cannot be decoded with `--encoding` fails the read, including a header whose name is not valid in that encoding. A bad byte after the first block names that column. UTF-16 read as UTF-8 reports the NUL bytes instead of a column-count error. PyArrow would otherwise return an undecoded data column as raw bytes.
-- Parquet `head` stops after the requested rows, including inside one large row group. A preview no longer reads that whole group.
-- Streamed `tail` keeps the trailing Arrow batches and slices them. CSV `tail` no longer converts every cell to Python.
+## 0.2.4
 
 - CSV and TSV reads accept `--encoding` (default `utf8`). The flag works before a subcommand and on it, and the subcommand value wins. An unknown name fails with `Unknown encoding`. Writes stay UTF-8.
-- `diff` reads `.xlsx` files. It parses the selected sheet in full so a value past the first 1000 rows can widen a column before types are compared.
-- A type difference stays in `schema_type_mismatches`, including with `--summary-only`. The text produced by `str(value)` when a number, date, or boolean is widened is not a cell edit. Any other text is. Keys stay exact, so `1` and `"1"` do not match.
+- `--encoding` is only validated for CSV and TSV input. A script that passes it globally no longer fails on a parquet or xlsx file.
+- A CSV or TSV column that cannot be decoded with `--encoding` fails the read, including a header whose name is not valid in that encoding. A bad byte after the first block names that column. UTF-16 read as UTF-8 reports the NUL bytes instead of a column-count error. PyArrow would otherwise return an undecoded data column as raw bytes.
 - `--encoding punycode` is rejected. PyArrow passes a buffer to that decoder and it raises AttributeError.
+- `diff` reads `.xlsx` files. It parses the selected sheet in full so a value past the first 1000 rows can widen a column before types are compared. Rows are kept only up to 100,000 per side; a larger sheet is parsed again in batches instead of held in memory.
+- A type difference stays in `schema_type_mismatches`, including with `--summary-only`. The text produced by `str(value)` when a number, date, or boolean is widened is not a cell edit, in any input format. Any other text is. Keys stay exact, so `1` and `"1"` do not match.
+- `diff` can sample rows whose keys are null next to numbers or strings. A Decimal NaN key matches another Decimal NaN. A list or struct column used as a key is rejected with the column name.
+- Parquet `head` stops after the requested rows, including inside one large row group. A preview no longer reads that whole group.
+- Streamed `tail` keeps the trailing Arrow batches and slices them. CSV `tail` no longer converts every cell to Python.
 
 ## 0.2.3
 
