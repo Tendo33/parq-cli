@@ -10,6 +10,7 @@ import sys
 import pytest
 import pyarrow as pa
 import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 from typer.testing import CliRunner
 
 from parq import __version__
@@ -460,6 +461,30 @@ class TestCLI:
         assert data["only_left_count"] == 1
         assert data["only_right_count"] == 1
         assert data["changed_count"] == 1
+
+    def test_cli_diff_plain_output_includes_type_mismatches(self, tmp_path):
+        """Plain diff output must show a type difference, including with --summary-only."""
+        left = tmp_path / "left.parquet"
+        right = tmp_path / "right.parquet"
+        pq.write_table(pa.table({"id": [1], "value": pa.array([1], pa.int64())}), left)
+        pq.write_table(pa.table({"id": [1], "value": pa.array(["1"], pa.string())}), right)
+
+        result = runner.invoke(
+            app,
+            [
+                "--output",
+                "plain",
+                "diff",
+                str(left),
+                str(right),
+                "--key",
+                "id",
+                "--summary-only",
+            ],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert "schema_type_mismatch\tvalue\tint64\tstring" in result.output
 
     def test_cli_diff_summary_only_json(self, tmp_path):
         """summary-only diff should expose counts without sample payloads."""

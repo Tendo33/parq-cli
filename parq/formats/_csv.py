@@ -58,7 +58,13 @@ def _csv_column_detail(message: str, schema: Optional[pa.Schema]) -> str:
 
 
 def _parse_error_tail(message: str) -> Optional[str]:
-    """Return the record PyArrow echoes after a column-count error."""
+    """Return the record PyArrow echoes after a column-count error.
+
+    PyArrow prints ``CSV parse error: Expected N columns, got M in
+    column name: <record>``. Only the echoed record is needed, so the last
+    ``": "`` is the split point. Reworded messages only drop the UTF-16
+    hint; the parse error itself still surfaces.
+    """
     if "CSV parse error:" not in message or "columns" not in message:
         return None
     _prefix, separator, tail = message.rpartition(": ")
@@ -76,6 +82,10 @@ def _translate_csv_arrow_error(
     string column. A column-count error only means UTF-16 when the echoed
     record is entirely NUL. A short row keeps the parse error when its text
     contains ``invalid UTF8`` or a NUL next to other bytes.
+
+    Both phrases are PyArrow 18-23 message text. A future reword drops the
+    hint and re-raises the original ``ArrowInvalid``; it never turns a parse
+    error into a wrong encoding claim.
     """
     message = str(exc)
     if "CSV conversion error to string: invalid UTF8 data" in message:

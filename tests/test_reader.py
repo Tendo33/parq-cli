@@ -929,6 +929,16 @@ class TestMultiFormatReader:
         )
         assert ordered == [(None,), quiet, (Decimal("2"),), (Decimal("10"),)]
 
+    def test_limited_key_sample_matches_the_full_sort(self):
+        """A limited sample is the head of the full sort, not an unsorted slice."""
+        from parq.reader import _sorted_diff_keys
+
+        keys = [(3,), (None,), (1,), (2,), (10,), (-1,)]
+        full = _sorted_diff_keys(keys)
+        assert _sorted_diff_keys(keys, limit=3) == full[:3]
+        assert _sorted_diff_keys(keys, limit=100) == full
+        assert _sorted_diff_keys(keys, limit=0) == []
+
     def test_diff_and_merge_close_parquet_readers(self, tmp_path, monkeypatch):
         """Parquet handles are released even when the operation succeeds."""
         from parq.reader import merge_files
@@ -1400,6 +1410,29 @@ class TestMultiFormatReader:
         with pytest.raises(ValueError, match="Unknown encoding"):
             MultiFormatReader(str(file_path), encoding="punycode")
 
+    def test_unknown_encoding_is_ignored_for_non_text_inputs(self, tmp_path):
+        """--encoding only describes CSV/TSV bytes, so parquet and xlsx must not fail."""
+        parquet_file = tmp_path / "data.parquet"
+        pq.write_table(pa.table({"id": [1]}), parquet_file)
+
+        reader = MultiFormatReader(str(parquet_file), encoding="bogus")
+        try:
+            assert reader.schema.names == ["id"]
+        finally:
+            reader.close()
+
+        openpyxl = pytest.importorskip("openpyxl")
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["id"])
+        worksheet.append([1])
+        xlsx_file = tmp_path / "data.xlsx"
+        workbook.save(xlsx_file)
+        workbook.close()
+
+        with MultiFormatReader(str(xlsx_file), encoding="bogus") as xlsx_reader:
+            assert xlsx_reader.schema.names == ["id"]
+
     def test_diff_xlsx_reports_changed_rows(self, tmp_path):
         """diff should compare two workbooks without converting them first."""
         openpyxl = pytest.importorskip("openpyxl")
@@ -1502,3 +1535,26 @@ class TestMultiFormatReader:
         mismatches = [item for item in result["schema_type_mismatches"] if item["column"] == "value"]
         assert len(mismatches) == 1
         assert mismatches[0]["left_type"] != mismatches[0]["right_type"]
+
+    def test_xlsx_rows_are_not_cached_past_the_diff_memory_limit(self, tmp_path, monkeypatch):
+        """A large sheet keeps its widened schema but drops the retained rows."""
+        openpyxl = pytest.importorskip("openpyxl")
+        from parq import reader as reader_module
+
+        monkeypatch.setattr(reader_module, "DIFF_MEMORY_ROW_LIMIT", 5)
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["id", "value"])
+        for index in range(20):
+            worksheet.append([index, index])
+        file_path = tmp_path / "big.xlsx"
+        workbook.save(file_path)
+        workbook.close()
+
+        with MultiFormatReader(str(file_path)) as reader:
+            reader._ensure_xlsx_types_for_full_read()
+            assert reader._xlsx_cached_rows == []
+            table = reader.read_columns()
+            assert table.num_rows == 20
+            assert table["value"].to_pylist() == list(range(20))

@@ -166,15 +166,19 @@ def _collect_tail_from_batches(
         return _create_empty_table(schema)
     kept: list[pa.RecordBatch] = []
     kept_rows = 0
+    first_live = 0
     for batch in batches:
         if len(batch) == 0:
             continue
         kept.append(batch)
         kept_rows += len(batch)
-        while len(kept) > 1 and kept_rows - len(kept[0]) >= n:
-            kept_rows -= len(kept.pop(0))
+        while len(kept) - first_live > 1 and kept_rows - len(kept[first_live]) >= n:
+            kept_rows -= len(kept[first_live])
+            first_live += 1
     if kept_rows == 0:
         return _create_empty_table(schema)
+    if first_live:
+        del kept[:first_live]
     table = pa.Table.from_batches(kept, schema=schema)
     if kept_rows > n:
         return table.slice(kept_rows - n, n)

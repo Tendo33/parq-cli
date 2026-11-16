@@ -198,13 +198,18 @@ def _schema_from_types(headers: List[str], inferred_types: List[Optional[pa.Data
 
 
 def _load_xlsx_sheet(
-    file_path: Path, sheet: Optional[str] = None, sample_size: Optional[int] = XLSX_TYPE_SAMPLE_ROWS
+    file_path: Path,
+    sheet: Optional[str] = None,
+    sample_size: Optional[int] = XLSX_TYPE_SAMPLE_ROWS,
+    retain_rows_limit: Optional[int] = None,
 ) -> tuple[_InputMetadata, Optional[List[List[Any]]]]:
     """Read headers and column types, retaining rows only for a full scan.
 
     A finite ``sample_size`` stops early and returns no cached rows. ``None``
     reads the sheet once and returns every data row so later iteration does
-    not parse the workbook again.
+    not parse the workbook again. ``retain_rows_limit`` stops retaining rows
+    once that many are kept; the sheet is still read in full for the types,
+    and the caller parses it again in batches.
     """
     worksheet, workbook = _open_xlsx_sheet(file_path, sheet)
     try:
@@ -231,7 +236,10 @@ def _load_xlsx_sheet(
                     inferred_types[idx], _infer_arrow_type(value)
                 )
             if cached_rows is not None:
-                cached_rows.append(values)
+                if retain_rows_limit is not None and len(cached_rows) >= retain_rows_limit:
+                    cached_rows = None
+                else:
+                    cached_rows.append(values)
             if sample_size is not None and sampled_rows >= sample_size:
                 break
 

@@ -21,5 +21,5 @@ pytest tests/test_performance.py -m performance -q -s
 
 - `parq schema` on XLSX samples the first 1000 rows. Full reads parse the sheet once with python-calamine and widen a column when a later value does not fit. Writing XLSX still uses openpyxl.
 - Parquet `head` stops inside a large row group. `tail` still reads the whole group when the last rows share one group. CSV type inference still uses PyArrow's 1 MiB block.
-- `diff` and `merge` use the global `--delimiter`, `--sheet`, and `--encoding`. `diff` reads XLSX after a full sheet parse. It keeps at most 100,000 rows per side in memory, then spills to temporary files. CSV/TSV `--encoding` applies to reads; a column or header that does not decode fails the read. Writes stay UTF-8.
+- `diff` and `merge` use the global `--delimiter`, `--sheet`, and `--encoding`. `diff` reads XLSX after a full sheet parse and keeps at most 100,000 rows per side; a larger sheet is parsed again in batches. Both sides spill to temporary files past that limit. CSV/TSV `--encoding` applies to reads; a column or header that does not decode fails the read. It is not validated for parquet or xlsx input. Writes stay UTF-8.
 - `.tsv` is valid for both input and output. Output uses a tab delimiter.

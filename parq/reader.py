@@ -10,6 +10,7 @@ Internal format-specific logic lives in parq/formats/:
   _parquet.py       — ParquetReader class
 """
 
+import heapq
 import math
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -88,10 +89,13 @@ class MultiFormatReader:
 
         self._delimiter = delimiter
         self._sheet = sheet
-        self._encoding = _validate_encoding(encoding)
 
         # Normalise input_format: tsv is handled like csv internally
         self.input_format = "csv" if suffix in {".csv", ".tsv"} else suffix.lstrip(".")
+
+        # --encoding only describes CSV/TSV bytes. Validating it for parquet or
+        # xlsx would fail a script that passes it globally.
+        self._encoding = _validate_encoding(encoding) if self.input_format == "csv" else encoding
 
         self._parquet_reader: Optional[ParquetReader] = None
         self._metadata_cache: Optional[_InputMetadata] = None
@@ -146,16 +150,27 @@ class MultiFormatReader:
         return self._metadata_cache
 
     def _ensure_xlsx_types_for_full_read(self) -> None:
-        """Parse an XLSX sheet once and widen column types before a full read."""
+        """Parse an XLSX sheet once and widen column types before a full read.
+
+        Rows are cached only up to ``DIFF_MEMORY_ROW_LIMIT``. A larger sheet
+        keeps the widened schema and is parsed again in batches, so a diff does
+        not hold every row of both sides as Python lists.
+        """
         if self.input_format != "xlsx":
             return
         if self._xlsx_cached_rows is not None:
             return
         if self._metadata_cache is not None and self._metadata_cache.schema_complete:
+            self._xlsx_cached_rows = []
             return
-        metadata, rows = _load_xlsx_sheet(self.file_path, sheet=self._sheet, sample_size=None)
+        metadata, rows = _load_xlsx_sheet(
+            self.file_path,
+            sheet=self._sheet,
+            sample_size=None,
+            retain_rows_limit=DIFF_MEMORY_ROW_LIMIT,
+        )
         self._metadata_cache = metadata
-        self._xlsx_cached_rows = rows or []
+        self._xlsx_cached_rows = rows if rows is not None else []
 
     def _iter_input_batches(self, columns: Optional[List[str]] = None) -> Iterator[pa.RecordBatch]:
         """Iterate non-parquet input in batches with format branching in one place."""
@@ -168,7 +183,7 @@ class MultiFormatReader:
                 encoding=self._encoding,
             )
             return
-        if self._xlsx_cached_rows is not None:
+        if self._xlsx_cached_rows:
             yield from _iter_cached_xlsx_rows(self._xlsx_cached_rows, metadata, columns=columns)
             return
         yield from _iter_xlsx_batches(self.file_path, metadata, columns=columns, sheet=self._sheet)
@@ -649,9 +664,21 @@ def _key_part_sort_token(part: Any) -> tuple[Any, ...]:
     return (12, type(part).__name__, repr(part))
 
 
-def _sorted_diff_keys(keys: Iterable[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
-    """Return diff keys in a stable order, including nulls and Decimal NaN."""
-    return sorted(keys, key=lambda key: tuple(_key_part_sort_token(part) for part in key))
+def _sorted_diff_keys(
+    keys: Iterable[tuple[Any, ...]], limit: Optional[int] = None
+) -> list[tuple[Any, ...]]:
+    """Return diff keys in a stable order, including nulls and Decimal NaN.
+
+    A limit uses ``heapq.nsmallest``, so an in-memory index of 100,000 keys is
+    not sorted in full to show the first few.
+    """
+
+    def sort_token(part_key: tuple[Any, ...]) -> tuple[Any, ...]:
+        return tuple(_key_part_sort_token(part) for part in part_key)
+
+    if limit is not None:
+        return heapq.nsmallest(limit, keys, key=sort_token)
+    return sorted(keys, key=sort_token)
 
 
 def _same_value(left: Any, right: Any) -> bool:
@@ -803,7 +830,7 @@ def _diff_rows_in_memory(
 
     remaining_indexed_count = len(indexed_rows)
     if not summary_only:
-        remaining_indexed_keys = _sorted_diff_keys(indexed_rows)[:limit]
+        remaining_indexed_keys = _sorted_diff_keys(indexed_rows, limit=limit)
         missing_from_indexed = _sorted_diff_keys(missing_from_indexed)
         only_left_keys = remaining_indexed_keys if index_left else missing_from_indexed
         only_right_keys = missing_from_indexed if index_left else remaining_indexed_keys

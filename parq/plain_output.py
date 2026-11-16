@@ -139,6 +139,15 @@ class PlainOutputFormatter:
             "changed_count",
         ]:
             writer.writerow([key, PlainOutputFormatter._normalize_value(diff_result[key])])
+        for item in diff_result.get("schema_type_mismatches") or []:
+            writer.writerow(
+                [
+                    "schema_type_mismatch",
+                    PlainOutputFormatter._normalize_value(item["column"]),
+                    PlainOutputFormatter._normalize_value(item["left_type"]),
+                    PlainOutputFormatter._normalize_value(item["right_type"]),
+                ]
+            )
 
     @staticmethod
     def print_convert_result(
