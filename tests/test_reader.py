@@ -1114,6 +1114,30 @@ class TestMultiFormatReader:
         assert actual["only_right_count"] == expected["only_right_count"] == 1
         assert actual["changed_count"] == expected["changed_count"] == 1
 
+    def test_diff_partition_samples_smallest_keys_across_buckets(self, tmp_path, monkeypatch):
+        """Bucketed diff should report the smallest keys, not one bucket's sample.
+
+        Each bucket samples its own smallest keys, so merging the parts without
+        re-sorting would keep whichever bucket came first and drop the rest.
+        """
+        import parq.reader as reader_mod
+
+        left = tmp_path / "left.csv"
+        right = tmp_path / "right.csv"
+        pacsv.write_csv(
+            pa.table({"id": list(range(20)), "value": ["x"] * 20}),
+            left,
+        )
+        pacsv.write_csv(pa.table({"id": [0], "value": ["x"]}), right)
+
+        expected = diff_files(left, right, ["id"], limit=3)
+        monkeypatch.setattr(reader_mod, "DIFF_MEMORY_ROW_LIMIT", 2)
+        actual = diff_files(left, right, ["id"], limit=3)
+
+        # Key 0 exists on both sides, so the left-only keys start at 1.
+        assert [row["key"] for row in expected["only_left"]] == [1, 2, 3]
+        assert [row["key"] for row in actual["only_left"]] == [1, 2, 3]
+
     def test_diff_partition_rejects_duplicate_keys(self, tmp_path, monkeypatch):
         """Duplicate keys should still fail when diff spills into buckets."""
         import parq.reader as reader_mod

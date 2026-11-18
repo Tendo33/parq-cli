@@ -60,6 +60,10 @@ __all__ = [
 # Distinct keys kept in one in-memory diff index. Larger inputs are
 # hash-partitioned into temporary Parquet files.
 DIFF_MEMORY_ROW_LIMIT = 100_000
+# Rows aimed for per partition. Hash partitioning is uneven, so aiming at the
+# limit itself leaves most buckets a little over it and every one of them
+# partitions again. Half the limit keeps each bucket clear of the threshold.
+DIFF_PARTITION_TARGET_ROWS = DIFF_MEMORY_ROW_LIMIT // 2
 
 
 class MultiFormatReader:
@@ -512,15 +516,22 @@ def _reader_batch_iterator(
     yield from reader._iter_input_batches(columns=columns)
 
 
-def _iter_row_dicts(
+def _iter_row_tuples(
     reader: MultiFormatReader,
     columns: List[str],
-) -> Iterator[dict[str, Any]]:
-    """Iterate selected rows as lightweight dicts without materializing full tables."""
+) -> Iterator[tuple[Any, ...]]:
+    """Iterate selected rows as tuples in ``columns`` order.
+
+    ``zip`` splits the columns into rows in C, which is far cheaper than a
+    dictionary comprehension per row. Dict-based callers convert from this.
+    """
     for batch in _reader_batch_iterator(reader, columns=columns):
         batch_dict = batch.to_pydict()
-        for row_idx in range(len(batch)):
-            yield {column: batch_dict[column][row_idx] for column in columns}
+        column_values = [batch_dict[column] for column in columns]
+        if not column_values:
+            yield from (() for _ in range(len(batch)))
+            continue
+        yield from zip(*column_values)
 
 
 def _build_diff_index(
@@ -531,14 +542,16 @@ def _build_diff_index(
     side_name: str,
 ) -> dict[tuple[Any, ...], dict[str, Any]]:
     """Build a keyed row index for diffing and reject duplicate keys."""
-    index: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for row in _iter_row_dicts(reader, selected_columns):
-        key = _row_key(row, key_columns)
+    key_positions = [selected_columns.index(column) for column in key_columns]
+    comparable_positions = [selected_columns.index(column) for column in comparable_columns]
+    index: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+    for row in _iter_row_tuples(reader, selected_columns):
+        key = _row_key_at(row, key_positions, key_columns)
         if key in index:
             raise ValueError(
                 f"Duplicate key found in {side_name} input: {_render_key(key)}"
             )
-        index[key] = {column: row[column] for column in comparable_columns}
+        index[key] = tuple(row[position] for position in comparable_positions)
     return index
 
 
@@ -609,13 +622,26 @@ _DECIMAL_NAN_KEY = _DecimalNaNKey()
 
 def _normalize_key_part(part: Any) -> Any:
     """Map values that should match as one key onto a stable, hashable form."""
-    if isinstance(part, float) and math.isnan(part):
-        return _NAN_KEY
-    if isinstance(part, Decimal) and part.is_nan():
-        return _DECIMAL_NAN_KEY
-    if isinstance(part, float) and part == 0:
-        return 0.0
+    # Keys are overwhelmingly strings, ints, or None. Testing the exact type
+    # first keeps that case to one check instead of a chain of isinstance
+    # calls, which cost more than everything else in a large diff.
+    kind = type(part)
+    if kind is float:
+        return _normalize_float_key(part)
+    if kind is Decimal:
+        return _DECIMAL_NAN_KEY if part.is_nan() else part
+    if isinstance(part, float):
+        return _normalize_float_key(part)
+    if isinstance(part, Decimal):
+        return _DECIMAL_NAN_KEY if part.is_nan() else part
     return part
+
+
+def _normalize_float_key(part: float) -> Any:
+    """Fold NaN onto one sentinel and -0.0 onto 0.0."""
+    if part != part:
+        return _NAN_KEY
+    return 0.0 if part == 0 else part
 
 
 def _row_key(row: dict[str, Any], key_columns: List[str]) -> tuple[Any, ...]:
@@ -625,6 +651,22 @@ def _row_key(row: dict[str, Any], key_columns: List[str]) -> tuple[Any, ...]:
         part = _normalize_key_part(row[column])
         if isinstance(part, (list, dict)):
             kind = "list" if isinstance(part, list) else "struct"
+            raise ValueError(f"Key column '{column}' contains a {kind}, which cannot be a key")
+        parts.append(part)
+    return tuple(parts)
+
+
+def _row_key_at(
+    row: tuple[Any, ...],
+    key_positions: List[int],
+    key_columns: List[str],
+) -> tuple[Any, ...]:
+    """Build a hashable key from a row tuple, given the key positions."""
+    parts = []
+    for position, column in zip(key_positions, key_columns, strict=True):
+        part = _normalize_key_part(row[position])
+        if part.__class__ is list or part.__class__ is dict:
+            kind = "list" if part.__class__ is list else "struct"
             raise ValueError(f"Key column '{column}' contains a {kind}, which cannot be a key")
         parts.append(part)
     return tuple(parts)
@@ -710,6 +752,16 @@ def _same_value(left: Any, right: Any) -> bool:
     return left == right
 
 
+def _row_dict(columns: List[str], values: tuple[Any, ...]) -> dict[str, Any]:
+    """Render a comparable-values tuple as the dict the diff payload reports."""
+    return dict(zip(columns, values))
+
+
+def _same_row_values(left: tuple[Any, ...], right: tuple[Any, ...]) -> bool:
+    """Compare two comparable-value tuples with NaN treated as equal."""
+    return all(_same_value(a, b) for a, b in zip(left, right))
+
+
 def _is_widened_text(value: Any, text: Any) -> bool:
     """Return whether text is the string XLSX stores when it widens this value.
 
@@ -734,16 +786,13 @@ def _is_widened_text(value: Any, text: Any) -> bool:
     return False
 
 
-def _bucket_key(key: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Normalize parts that compare equal so they land in the same bucket."""
-    return tuple(_normalize_key_part(part) for part in key)
-
-
 def _stable_bucket(key: tuple[Any, ...], num_buckets: int, salt: int) -> int:
     """Hash a key into a bucket without depending on PYTHONHASHSEED."""
     import zlib
 
-    payload = repr((salt, _bucket_key(key))).encode("utf-8", errors="backslashreplace")
+    # ``key`` already came from ``_row_key``, so its parts are normalized and
+    # normalizing again is pure work.
+    payload = repr((salt, key)).encode("utf-8", errors="backslashreplace")
     return zlib.crc32(payload) % num_buckets
 
 
@@ -786,21 +835,23 @@ def _diff_rows_in_memory(
             indexed_side_name,
         )
 
+    key_positions = [selected_columns.index(column) for column in key_columns]
+    comparable_positions = [selected_columns.index(column) for column in comparable_columns]
     missing_from_indexed: List[tuple[Any, ...]] = []
     missing_from_indexed_count = 0
     changed_rows = []
     changed_count = 0
     seen_streamed_keys: set[tuple[Any, ...]] = set()
 
-    for row in _iter_row_dicts(streamed_reader, selected_columns):
-        key = _row_key(row, key_columns)
+    for row in _iter_row_tuples(streamed_reader, selected_columns):
+        key = _row_key_at(row, key_positions, key_columns)
         if key in seen_streamed_keys:
             raise ValueError(
                 f"Duplicate key found in {streamed_side_name} input: {_render_key(key)}"
             )
         seen_streamed_keys.add(key)
 
-        streamed_values = {column: row[column] for column in comparable_columns}
+        streamed_values = tuple(row[position] for position in comparable_positions)
         if key not in indexed_rows:
             missing_from_indexed_count += 1
             if not summary_only and len(missing_from_indexed) < limit:
@@ -808,17 +859,19 @@ def _diff_rows_in_memory(
             continue
 
         indexed_values = indexed_rows.pop(key)
-        if any(
-            not _same_value(streamed_values[column], indexed_values[column])
-            for column in comparable_columns
+        # Tuple equality settles the common case where every compared cell is
+        # identical; the per-cell comparison only runs when something differs,
+        # where it still has to treat NaN as equal to NaN.
+        if streamed_values != indexed_values and not _same_row_values(
+            streamed_values, indexed_values
         ):
             changed_count += 1
             if index_left:
-                left_values = indexed_values
-                right_values = streamed_values
+                left_values = _row_dict(comparable_columns, indexed_values)
+                right_values = _row_dict(comparable_columns, streamed_values)
             else:
-                left_values = streamed_values
-                right_values = indexed_values
+                left_values = _row_dict(comparable_columns, streamed_values)
+                right_values = _row_dict(comparable_columns, indexed_values)
             if not summary_only and len(changed_rows) < limit:
                 changed_rows.append(
                     {
@@ -868,18 +921,34 @@ def _spill_reader_to_buckets(
     writers: List[Any] = []
     writer_for_bucket: List[Any] = [None] * num_buckets
     try:
+        key_positions = [selected_columns.index(column) for column in key_columns]
         for batch in _reader_batch_iterator(reader, columns=selected_columns):
             if len(batch) == 0:
                 continue
             batch_dict = batch.to_pydict()
+            key_values = [batch_dict[column] for column in selected_columns]
             bucket_indices: List[List[int]] = [[] for _ in range(num_buckets)]
-            for row_idx in range(len(batch)):
-                key = _row_key(
-                    {column: batch_dict[column][row_idx] for column in key_columns},
-                    key_columns,
-                )
-                bucket = _stable_bucket(key, num_buckets, salt)
-                bucket_indices[bucket].append(row_idx)
+            append = [indices.append for indices in bucket_indices]
+            if len(key_positions) == 1:
+                position = key_positions[0]
+                normalize = _normalize_key_part
+                for row_idx, value in enumerate(key_values[position]):
+                    part = normalize(value)
+                    if part.__class__ is list or part.__class__ is dict:
+                        kind = "list" if part.__class__ is list else "struct"
+                        raise ValueError(
+                            f"Key column '{key_columns[0]}' contains a {kind}, "
+                            "which cannot be a key"
+                        )
+                    append[_stable_bucket((part,), num_buckets, salt)](row_idx)
+            else:
+                for row_idx in range(len(batch)):
+                    key = _row_key_at(
+                        tuple(values[row_idx] for values in key_values),
+                        key_positions,
+                        key_columns,
+                    )
+                    append[_stable_bucket(key, num_buckets, salt)](row_idx)
             for bucket, indices in enumerate(bucket_indices):
                 if not indices:
                     continue
@@ -918,10 +987,28 @@ def _merge_row_diffs(parts: List[dict], limit: int, summary_only: bool) -> dict:
         merged["changed_rows"].extend(part["changed_rows"])
     if summary_only:
         return merged
-    merged["only_left"] = merged["only_left"][:limit]
-    merged["only_right"] = merged["only_right"][:limit]
+    # Each bucket sampled its own smallest `limit` keys, so the merge kept one
+    # bucket's whole sample and dropped the rest. Re-sort the union to keep the
+    # smallest keys overall, which is what an unpartitioned diff reports.
+    merged["only_left"] = _sort_rendered_keys(merged["only_left"], limit)
+    merged["only_right"] = _sort_rendered_keys(merged["only_right"], limit)
     merged["changed_rows"] = merged["changed_rows"][:limit]
     return merged
+
+
+def _sort_rendered_keys(rows: List[dict[str, Any]], limit: int) -> List[dict[str, Any]]:
+    """Order ``{"key": ...}`` rows by the diff's key ordering and trim to ``limit``."""
+    if len(rows) <= 1:
+        return rows[:limit]
+
+    def sort_token(row: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
+        key = row["key"]
+        parts = key if isinstance(key, tuple) else (key,)
+        return tuple(_key_part_sort_token(part) for part in parts)
+
+    if len(rows) > limit:
+        return heapq.nsmallest(limit, rows, key=sort_token)
+    return sorted(rows, key=sort_token)
 
 
 def _diff_rows_partitioned(
@@ -940,7 +1027,7 @@ def _diff_rows_partitioned(
     import math
     import tempfile
 
-    num_buckets = min(32, max(2, math.ceil(parent_rows / DIFF_MEMORY_ROW_LIMIT)))
+    num_buckets = min(32, max(2, math.ceil(parent_rows / DIFF_PARTITION_TARGET_ROWS)))
     with tempfile.TemporaryDirectory(prefix="parq-diff-") as tmp_dir:
         directory = Path(tmp_dir)
         if left_reader is None:
