@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.5
+
+- `diff` on inputs large enough to spill samples the smallest differing keys, matching what a smaller input reports. Each partition used to keep its own smallest keys and the merge kept whichever partition came first, so a spilled diff could report keys that were not the smallest in the file. Counts were never affected, only the `only_left` / `only_right` samples in `plain` and `json` output.
+- `diff` partitions into half the row limit per bucket instead of aiming at the limit itself. Hash partitioning is uneven, so most buckets landed just over the threshold and partitioned a second time, rewriting the rows into temporary files two to three times. A 1,000,000-row diff against a 1,000,000-row file now takes about 5.1 s instead of 8.4 s on the same machine.
+- `diff` reads rows as tuples rather than building a dict per row, and compares comparable values with plain tuple equality before falling back to the per-cell NaN-aware comparison. A key part is normalized once instead of twice.
+- A partition still writes at most 32 buckets, so the smaller target only changes inputs below roughly 3.2 million rows: those split into twice as many, half-sized temporary files. At or above that size both limits clamp to 32 buckets and behave identically.
+
 ## 0.2.4
 
 - CSV and TSV reads accept `--encoding` (default `utf8`). The flag works before a subcommand and on it, and the subcommand value wins. An unknown name fails with `Unknown encoding`. Writes stay UTF-8.
