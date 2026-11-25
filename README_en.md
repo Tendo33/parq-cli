@@ -17,7 +17,7 @@ One command-line tool for `.parquet`, `.csv`, `.tsv` and `.xlsx` that starts fas
 
 <sub>[中文](README.md) · English</sub>
 
-<img src="docs/images/parquet-concept.webp" alt="Parquet, CSV, TSV and XLSX inputs flowing into one read path that yields the same rows and columns" width="760">
+<img src="docs/screenshots/parquet-concept.webp" alt="Parquet, CSV, TSV and XLSX inputs flowing into one read path that yields the same rows and columns" width="760">
 
 </div>
 

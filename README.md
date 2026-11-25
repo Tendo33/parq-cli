@@ -17,7 +17,7 @@
 
 <sub>中文 · [English](README_en.md)</sub>
 
-<img src="docs/images/parquet-concept.webp" alt="Parquet、CSV、TSV、XLSX 四种表格输入汇入同一条读取路径，输出统一的行列结果" width="760">
+<img src="docs/screenshots/parquet-concept.webp" alt="Parquet、CSV、TSV、XLSX 四种表格输入汇入同一条读取路径，输出统一的行列结果" width="760">
 
 </div>
 
