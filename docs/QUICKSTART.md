@@ -151,9 +151,9 @@ A:
 
 ## 🎯 下一步
 
-- 查看完整文档：[README.md](README.md)
-- 查看示例：[examples/README.md](examples/README.md)
-- 查看发布说明：[docs/RELEASE.md](docs/RELEASE.md)
+- 查看完整文档：[README.md](../README.md)
+- 查看示例：[examples/README.md](../examples/README.md)
+- 查看发布说明：[docs/RELEASE.md](RELEASE.md)
 
 ## 💡 提示
 

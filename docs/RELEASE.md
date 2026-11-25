@@ -109,8 +109,8 @@ git push origin v0.1.2
 
 ## 📚 更多信息
 
-- **详细文档:** [scripts/README.md](scripts/README.md)
-- **工作流配置:** [.github/workflows/publish.yml](.github/workflows/publish.yml)
+- **详细文档:** [scripts/README.md](../scripts/README.md)
+- **工作流配置:** [.github/workflows/publish.yml](../.github/workflows/publish.yml)
 - **PyPI 页面:** https://pypi.org/project/parq-cli/
 - **GitHub Releases:** https://github.com/Tendo33/parq-cli/releases
 
